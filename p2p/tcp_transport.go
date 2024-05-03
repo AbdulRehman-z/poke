@@ -3,6 +3,7 @@ package p2p
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"log/slog"
@@ -28,12 +29,6 @@ type Message struct {
 	Payload io.Reader
 }
 
-// Transport, every transport whether its udp,tcp or gRPC
-// must implement this interface.
-type Transport interface {
-	ListenAndAccept() error
-}
-
 type TCPTransportOpts struct {
 	Laddr *net.TCPAddr
 }
@@ -44,8 +39,8 @@ type TCPTransport struct {
 	Handler     Handler
 
 	// mu          sync.RWMutex
-	peers       map[net.Addr]*TCPPeer
-	addPeerChan chan *TCPPeer
+	addPeerChan chan Peer
+	delPeerCh   chan Peer
 	msgChan     chan *Message
 }
 
@@ -53,10 +48,26 @@ func NewTCPTransport(opts TCPTransportOpts) Transport {
 	return &TCPTransport{
 		TCPTransportOpts: opts,
 		Handler:          &DefaultHandler{},
-		peers:            make(map[net.Addr]*TCPPeer),
-		addPeerChan:      make(chan *TCPPeer),
+		addPeerChan:      make(chan Peer),
+		delPeerCh:        make(chan Peer),
 		msgChan:          make(chan *Message),
 	}
+}
+
+func (t *TCPTransport) Addr() string {
+	return t.Laddr.AddrPort().String()
+}
+
+func (t *TCPTransport) Consume() <-chan *Message {
+	return t.msgChan
+}
+
+func (t *TCPTransport) AddPeer() <-chan Peer {
+	return t.addPeerChan
+}
+
+func (t *TCPTransport) DelPeer() <-chan Peer {
+	return t.delPeerCh
 }
 
 func (t *TCPTransport) ListenAndAccept() error {
@@ -65,18 +76,38 @@ func (t *TCPTransport) ListenAndAccept() error {
 		slog.Error("ERR tcp listen", "err", err)
 	}
 	t.tcpListener = ln
+	slog.Info("tcp listening", "addr", t.Addr())
 
-	go t.loop()
 	go t.tcpAcceptLoop()
+	return nil
+}
 
+func (t *TCPTransport) Dial(port int) error {
+	conn, err := net.DialTCP("tcp", &net.TCPAddr{
+		IP:   net.ParseIP("localhost"),
+		Port: 9000,
+	},
+		&net.TCPAddr{
+			IP:   net.ParseIP("localhost"),
+			Port: port,
+		})
+	if err != nil {
+		slog.Error("ERR dial failed", "port", port)
+	}
+	peer := &TCPPeer{
+		Conn: conn,
+	}
+
+	fmt.Println(peer.Conn.RemoteAddr().String())
+	t.addPeerChan <- peer
+	// go t.handleConn(conn)
 	return nil
 }
 
 func (t *TCPTransport) tcpAcceptLoop() {
 	for {
 		conn, err := t.tcpListener.AcceptTCP()
-		log.Println("accepting")
-
+		log.Printf("%s accepted %s\n", t.Laddr.String(), conn.RemoteAddr().String())
 		if errors.Is(err, net.ErrClosed) {
 			slog.Error("conection didn't accepted", "err", err)
 			return
@@ -84,8 +115,6 @@ func (t *TCPTransport) tcpAcceptLoop() {
 		if err != nil {
 			slog.Error("ERR tcp accept", "err", err)
 		}
-
-		t.addPeerChan <- &TCPPeer{Conn: conn}
 		go t.handleConn(conn)
 	}
 }
@@ -94,8 +123,6 @@ func (t *TCPTransport) handleConn(conn *net.TCPConn) {
 	buf := make([]byte, 1024)
 	for {
 		n, err := conn.Read(buf)
-		log.Println("handling conn")
-
 		if err != nil {
 			slog.Error("ERR tcp read", "err", err)
 		}
@@ -104,22 +131,6 @@ func (t *TCPTransport) handleConn(conn *net.TCPConn) {
 			From:    conn.RemoteAddr(),
 			To:      conn.LocalAddr(),
 			Payload: bytes.NewReader(buf[:n]),
-		}
-		slog.Info("tcp read", "msg", string(buf[:n]))
-	}
-}
-
-func (t *TCPTransport) loop() {
-	for {
-		select {
-		case peer := <-t.addPeerChan:
-			t.peers[peer.RemoteAddr()] = peer
-			peer.Send([]byte("You are accepted!"))
-			slog.Info("peer added", "addr", peer.RemoteAddr())
-		case msg := <-t.msgChan:
-			if err := t.Handler.HandleMessage(msg); err != nil {
-				slog.Error("ERR handle message", "err", err)
-			}
 		}
 	}
 }
