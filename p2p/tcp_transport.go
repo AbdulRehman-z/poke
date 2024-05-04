@@ -3,11 +3,11 @@ package p2p
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"log/slog"
 	"net"
+	"time"
 )
 
 // type Peer interface {
@@ -54,22 +54,27 @@ func NewTCPTransport(opts TCPTransportOpts) Transport {
 	}
 }
 
+// Addr implements the Transport interface, it returns the address of the transport
 func (t *TCPTransport) Addr() string {
 	return t.Laddr.AddrPort().String()
 }
 
+// Consume implements the Transport interface, it returns the message channel
 func (t *TCPTransport) Consume() <-chan *Message {
 	return t.msgChan
 }
 
+// AddPeer implements the Transport interface, it returns the peer channel
 func (t *TCPTransport) AddPeer() <-chan Peer {
 	return t.addPeerChan
 }
 
+// DelPeer implements the Transport interface, it returns the peer channel
 func (t *TCPTransport) DelPeer() <-chan Peer {
 	return t.delPeerCh
 }
 
+// ListenAndAccept implements the Transport interface, it listens for incoming connections
 func (t *TCPTransport) ListenAndAccept() error {
 	ln, err := net.ListenTCP("tcp", t.Laddr)
 	if err != nil {
@@ -82,11 +87,10 @@ func (t *TCPTransport) ListenAndAccept() error {
 	return nil
 }
 
+// Dial implements the Transport interface, it dials a connection to the given port and handles
+// the connection that is returned by the dial i.e it reads from the connection
 func (t *TCPTransport) Dial(port int) error {
-	conn, err := net.DialTCP("tcp", &net.TCPAddr{
-		IP:   net.ParseIP("localhost"),
-		Port: 9000,
-	},
+	conn, err := net.DialTCP("tcp", nil,
 		&net.TCPAddr{
 			IP:   net.ParseIP("localhost"),
 			Port: port,
@@ -94,20 +98,19 @@ func (t *TCPTransport) Dial(port int) error {
 	if err != nil {
 		slog.Error("ERR dial failed", "port", port)
 	}
-	peer := &TCPPeer{
-		Conn: conn,
-	}
 
-	fmt.Println(peer.Conn.RemoteAddr().String())
-	t.addPeerChan <- peer
-	// go t.handleConn(conn)
+	// we launch this go routine to handle any kind of arbitrary data that
+	// the connection might send us
+	go t.handleConn(conn)
+	time.Sleep(1 * time.Second)
+	conn.Write([]byte("hello from dialer"))
 	return nil
 }
 
+// tcpAcceptLoop listens for incoming connections and adds them to the peer channel
 func (t *TCPTransport) tcpAcceptLoop() {
 	for {
 		conn, err := t.tcpListener.AcceptTCP()
-		log.Printf("%s accepted %s\n", t.Laddr.String(), conn.RemoteAddr().String())
 		if errors.Is(err, net.ErrClosed) {
 			slog.Error("conection didn't accepted", "err", err)
 			return
@@ -115,14 +118,26 @@ func (t *TCPTransport) tcpAcceptLoop() {
 		if err != nil {
 			slog.Error("ERR tcp accept", "err", err)
 		}
+
+		peer := &TCPPeer{
+			Conn: conn,
+		}
+		t.addPeerChan <- peer
+
+		// we launch this go routine to handle any kind of arbitrary data that
+		// we accept from the dialed connection or telnet connection
 		go t.handleConn(conn)
 	}
 }
 
+// handleConn reads from the connection and sends the data to the message channel
+// Note: this is executed for every new connection in separate go routine handling specifically
+// that connection i.e. it ONLY reads from that connection
 func (t *TCPTransport) handleConn(conn *net.TCPConn) {
 	buf := make([]byte, 1024)
 	for {
 		n, err := conn.Read(buf)
+		log.Println("read")
 		if err != nil {
 			slog.Error("ERR tcp read", "err", err)
 		}
