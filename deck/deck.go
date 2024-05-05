@@ -5,24 +5,6 @@ import (
 	"math/rand"
 )
 
-type GameVariant uint8
-
-func (gv GameVariant) String() string {
-	switch gv {
-	case TexasHoldings:
-		return "TEXAS HOLDINGS"
-	case Other:
-		return "other"
-	default:
-		return "unknown"
-	}
-}
-
-const (
-	TexasHoldings GameVariant = iota
-	Other
-)
-
 type Suit int
 
 func (s Suit) String() string {
