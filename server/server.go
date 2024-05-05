@@ -3,29 +3,12 @@ package server
 import (
 	"log/slog"
 	"net"
+	"poker/deck"
 	"poker/p2p"
 )
 
-type GameVariant uint8
-
-func (gv GameVariant) String() string {
-	switch gv {
-	case TexasHoldings:
-		return "TEXAS HOLDINGS"
-	case Other:
-		return "other"
-	default:
-		return "unknown"
-	}
-}
-
-const (
-	TexasHoldings GameVariant = iota
-	Other
-)
-
 type ServerConfig struct {
-	GameVariant GameVariant
+	GameVariant deck.GameVariant
 	GameVersion string
 	Transport   p2p.Transport
 }
