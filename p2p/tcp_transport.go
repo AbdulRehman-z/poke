@@ -7,19 +7,21 @@ import (
 	"log"
 	"log/slog"
 	"net"
-	"time"
 )
 
-// type Peer interface {
-// 	net.TCPConn
-// }
-
 type TCPPeer struct {
-	net.Conn
+	conn net.Conn
+}
+
+func NewTCPPeer(conn net.Conn) *TCPPeer {
+	return &TCPPeer{
+		conn: conn,
+	}
 }
 
 func (p *TCPPeer) Send(msg []byte) error {
-	_, err := p.Write(msg)
+	n, err := p.conn.Write(msg)
+	log.Printf("write n: %d\n", n)
 	return err
 }
 
@@ -30,7 +32,9 @@ type Message struct {
 }
 
 type TCPTransportOpts struct {
-	Laddr *net.TCPAddr
+	Laddr  *net.TCPAddr
+	OnPeer func(Peer) error
+	// Handshake HandshakeFunc
 }
 
 type TCPTransport struct {
@@ -39,8 +43,8 @@ type TCPTransport struct {
 	Handler     Handler
 
 	// mu          sync.RWMutex
-	addPeerChan chan Peer
-	delPeerCh   chan Peer
+	addPeerChan chan *TCPPeer
+	delPeerCh   chan *TCPPeer
 	msgChan     chan *Message
 }
 
@@ -48,8 +52,8 @@ func NewTCPTransport(opts TCPTransportOpts) Transport {
 	return &TCPTransport{
 		TCPTransportOpts: opts,
 		Handler:          &DefaultHandler{},
-		addPeerChan:      make(chan Peer),
-		delPeerCh:        make(chan Peer),
+		addPeerChan:      make(chan *TCPPeer),
+		delPeerCh:        make(chan *TCPPeer),
 		msgChan:          make(chan *Message),
 	}
 }
@@ -65,12 +69,12 @@ func (t *TCPTransport) Consume() <-chan *Message {
 }
 
 // AddPeer implements the Transport interface, it returns the peer channel
-func (t *TCPTransport) AddPeer() <-chan Peer {
+func (t *TCPTransport) AddPeer() <-chan *TCPPeer {
 	return t.addPeerChan
 }
 
 // DelPeer implements the Transport interface, it returns the peer channel
-func (t *TCPTransport) DelPeer() <-chan Peer {
+func (t *TCPTransport) DelPeer() <-chan *TCPPeer {
 	return t.delPeerCh
 }
 
@@ -98,12 +102,16 @@ func (t *TCPTransport) Dial(port int) error {
 	if err != nil {
 		slog.Error("ERR dial failed", "port", port)
 	}
+	peer := &TCPPeer{
+		conn: conn,
+	}
+	t.addPeerChan <- peer
 
 	// we launch this go routine to handle any kind of arbitrary data that
 	// the connection might send us
 	go t.handleConn(conn)
-	time.Sleep(1 * time.Second)
-	conn.Write([]byte("hello from dialer"))
+	// time.Sleep(1 * time.Second)
+	// conn.Write([]byte("hello from dialer"))
 	return nil
 }
 
@@ -120,10 +128,9 @@ func (t *TCPTransport) tcpAcceptLoop() {
 		}
 
 		peer := &TCPPeer{
-			Conn: conn,
+			conn: conn,
 		}
 		t.addPeerChan <- peer
-
 		// we launch this go routine to handle any kind of arbitrary data that
 		// we accept from the dialed connection or telnet connection
 		go t.handleConn(conn)
@@ -134,13 +141,14 @@ func (t *TCPTransport) tcpAcceptLoop() {
 // Note: this is executed for every new connection in separate go routine handling specifically
 // that connection i.e. it ONLY reads from that connection
 func (t *TCPTransport) handleConn(conn *net.TCPConn) {
-	buf := make([]byte, 1024)
 	for {
+		buf := make([]byte, 1024)
 		n, err := conn.Read(buf)
-		log.Println("read")
 		if err != nil {
 			slog.Error("ERR tcp read", "err", err)
 		}
+
+		slog.Info("Buff to string", "buff", string(buf[:n]))
 
 		t.msgChan <- &Message{
 			From:    conn.RemoteAddr(),
