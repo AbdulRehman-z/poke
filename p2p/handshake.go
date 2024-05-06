@@ -16,9 +16,7 @@ type HandshakePass struct {
 
 func PerformHandshake(p *TCPPeer, variant GameVariant, version string) error {
 	slog.Info("Performing Handshake")
-	slog.Info("Connection Established", "RemoteAddr", p.conn.RemoteAddr())
 	hp := &HandshakePass{}
-	// blocks here
 	if err := gob.NewDecoder(p.conn).Decode(hp); err != nil {
 		return err
 	}
