@@ -1,9 +1,9 @@
 package p2p
 
 import (
-	"log"
 	"log/slog"
 	"net"
+	"time"
 )
 
 type GameVariant uint8
@@ -67,19 +67,11 @@ func (s *Server) loop() {
 	for {
 		select {
 		case peer := <-s.Transport.AddPeer():
-			// slog.Info("peer added", "peer", peer.RemoteAddr(), "from", s.Transport.Addr())
-			// if err := s.SendHandshake(peer); err != nil {
-			// 	log.Println("ERR send handshake", "err", err)
-			// }
 			go SendHandshake(peer, s.GameVariant, s.GameVersion)
-			// time.Sleep(2 * time.Second)
-			if err := PerformHandshake(peer, s.GameVariant, s.GameVersion); err != nil {
-				log.Println("ERR perform handshake", "err", err)
-			}
-
-			log.Println("Handshake sent")
+			time.Sleep(1 * time.Second)
+			go s.Transport.HandlePeer(peer, s.GameVariant, s.GameVersion)
 			s.peers[peer.conn.RemoteAddr()] = peer
-			// slog.Info("peer added", "peer", peer.RemoteAddr(), "to", s.Transport.Addr())
+			slog.Info("peer added", "peer", peer.conn.RemoteAddr(), "to", s.Transport.Addr())
 		case peer := <-s.Transport.DelPeer():
 			delete(s.peers, peer.conn.RemoteAddr())
 			slog.Info("peer deleted", "addr", peer.conn.RemoteAddr())
