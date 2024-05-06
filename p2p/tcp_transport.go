@@ -10,7 +10,8 @@ import (
 )
 
 type TCPPeer struct {
-	conn *net.TCPConn
+	conn     *net.TCPConn
+	outbound bool
 }
 
 func NewTCPPeer(conn *net.TCPConn) *TCPPeer {
@@ -20,8 +21,7 @@ func NewTCPPeer(conn *net.TCPConn) *TCPPeer {
 }
 
 func (p *TCPPeer) Send(msg []byte) error {
-	n, err := p.conn.Write(msg)
-	log.Printf("write n: %d\n", n)
+	_, err := p.conn.Write(msg)
 	return err
 }
 
@@ -98,7 +98,7 @@ func (t *TCPTransport) ListenAndAccept() error {
 
 // Dial implements the Transport interface, it dials a connection to the given port and handles
 // the connection that is returned by the dial i.e it reads from the connection
-func (t *TCPTransport) Dial(port int) error {
+func (t *TCPTransport) Dial(port int, gv GameVariant, version string) error {
 	conn, err := net.DialTCP("tcp", nil,
 		&net.TCPAddr{
 			IP:   net.ParseIP("localhost"),
@@ -108,14 +108,12 @@ func (t *TCPTransport) Dial(port int) error {
 		slog.Error("ERR dial failed", "port", port)
 	}
 	peer := &TCPPeer{
-		conn: conn,
+		conn:     conn,
+		outbound: true,
 	}
 	t.addPeerChan <- peer
 
-	// we launch this go routine to handle any kind of arbitrary data that
-	// the connection might send us
-	// go t.handleConn(conn)
-	return nil
+	return SendHandshake(peer, gv, version)
 }
 
 // tcpAcceptLoop listens for incoming connections and adds them to the peer channel
@@ -131,45 +129,27 @@ func (t *TCPTransport) tcpAcceptLoop() {
 		}
 
 		peer := &TCPPeer{
-			conn: conn,
+			conn:     conn,
+			outbound: false,
 		}
 		t.addPeerChan <- peer
-		// we launch this go routine to handle any kind of arbitrary data that
-		// we accept from the dialed connection or telnet connection
-		// go t.handleConn(conn)
 	}
 }
 
 // handleConn reads from the connection and sends the data to the message channel
 // Note: this is executed for every new connection in separate go routine handling specifically
 // that connection i.e. it ONLY reads from that connection
-func (t *TCPTransport) HandlePeer(peer *TCPPeer, variant GameVariant, version string) {
-	if err := PerformHandshake(peer, variant, version); err != nil {
-		log.Println("ERR perform handshake", "err", err)
-		peer.conn.Close()
-		return
-	}
-
-	if t.OnPeer != nil {
-		if err := t.OnPeer(peer); err != nil {
-			peer.conn.Close()
-			log.Println("Failed to add peer")
-			return
-		}
-	}
-
-loop:
+func (t *TCPTransport) HandlePeer(peer *TCPPeer, variant GameVariant, version string) error {
 	for {
 		buf := make([]byte, 1024)
 		n, err := peer.conn.Read(buf)
 		if errors.Is(err, net.ErrClosed) {
-			log.Println("Can't Read over closed channel")
-			break loop
+			return err
 		}
 		if err != nil {
 			peer.conn.Close()
 			t.delPeerCh <- peer
-			break loop
+			return err
 		}
 
 		log.Println("Read Loop Started")
