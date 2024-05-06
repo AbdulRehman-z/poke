@@ -19,5 +19,6 @@ type Transport interface {
 	Consume() <-chan *Message
 	AddPeer() <-chan *TCPPeer
 	DelPeer() <-chan *TCPPeer
+	HandlePeer(*TCPPeer, GameVariant, string)
 	// OnPeer(Peer) error
 }
