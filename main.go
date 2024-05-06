@@ -8,12 +8,12 @@ import (
 )
 
 func initServer(version string, variant p2p.GameVariant, port int) *p2p.Server {
-	tcpTransportOpts := p2p.TCPTransportOpts{
+	tcpTransportOpts := &p2p.TCPTransportOpts{
 		Laddr: &net.TCPAddr{
 			IP:   net.ParseIP("127.0.0.1"),
 			Port: port,
 		},
-		// Handshake: p2p.PerformHandshake,
+		Handshake: p2p.PerformHandshake,
 	}
 
 	t := p2p.NewTCPTransport(tcpTransportOpts)
@@ -25,7 +25,7 @@ func initServer(version string, variant p2p.GameVariant, port int) *p2p.Server {
 	}
 
 	s := p2p.NewServer(opts)
-	// t.OnPeer = s.OnPeer
+	t.OnPeer = s.OnPeer
 	return s
 }
 
