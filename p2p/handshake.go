@@ -15,13 +15,13 @@ type HandshakePass struct {
 }
 
 func PerformHandshake(p *TCPPeer, variant GameVariant, version string) error {
-	slog.Info("Performing Handshake")
+	// slog.Info("Performing Handshake")
 	hp := &HandshakePass{}
 	if err := gob.NewDecoder(p.conn).Decode(hp); err != nil {
 		return err
 	}
 
-	slog.Info("Received Handshake", "GameVariant", hp.GameVariant, "Version", hp.Version)
+	// slog.Info("Received Handshake", "GameVariant", hp.GameVariant, "Version", hp.Version)
 	if hp.GameVariant != variant {
 		slog.Error("Game Variant Mismatch", "Expected", variant, "Received", hp.GameVariant)
 		return errors.ErrUnsupported
@@ -32,7 +32,7 @@ func PerformHandshake(p *TCPPeer, variant GameVariant, version string) error {
 		return errors.ErrUnsupported
 	}
 
-	slog.Info("Handshake Performed", "GameVariant", hp.GameVariant, "Version", hp.Version)
+	slog.Info("Handshake Performed", "GameVariant", hp.GameVariant, "Version", hp.Version, "peer", p.outbound)
 	return nil
 }
 
