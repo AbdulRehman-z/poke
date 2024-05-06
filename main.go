@@ -31,7 +31,7 @@ func initServer(version string, variant p2p.GameVariant, port int) *p2p.Server {
 
 func main() {
 	s1 := initServer("GGPOKE V0.1-alpha", p2p.TexasHoldings, 3000)
-	s2 := initServer("GGPOKE V0.1-", p2p.TexasHoldings, 4000)
+	s2 := initServer("GGPOKE V0.1-alph", p2p.TexasHoldings, 4000)
 	go func() {
 		log.Fatal(s1.Start())
 	}()
@@ -43,7 +43,7 @@ func main() {
 	}()
 
 	time.Sleep(1 * time.Second)
-	if err := s2.Transport.Dial(3000); err != nil {
+	if err := s2.Transport.Dial(3000, p2p.GameVariant(s2.GameVariant), s2.GameVersion); err != nil {
 		log.Println(err)
 	}
 	select {}
