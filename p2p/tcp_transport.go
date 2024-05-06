@@ -10,10 +10,10 @@ import (
 )
 
 type TCPPeer struct {
-	conn net.Conn
+	conn *net.TCPConn
 }
 
-func NewTCPPeer(conn net.Conn) *TCPPeer {
+func NewTCPPeer(conn *net.TCPConn) *TCPPeer {
 	return &TCPPeer{
 		conn: conn,
 	}
@@ -109,9 +109,7 @@ func (t *TCPTransport) Dial(port int) error {
 
 	// we launch this go routine to handle any kind of arbitrary data that
 	// the connection might send us
-	go t.handleConn(conn)
-	// time.Sleep(1 * time.Second)
-	// conn.Write([]byte("hello from dialer"))
+	// go t.handleConn(conn)
 	return nil
 }
 
@@ -133,27 +131,39 @@ func (t *TCPTransport) tcpAcceptLoop() {
 		t.addPeerChan <- peer
 		// we launch this go routine to handle any kind of arbitrary data that
 		// we accept from the dialed connection or telnet connection
-		go t.handleConn(conn)
+		// go t.handleConn(conn)
 	}
 }
 
 // handleConn reads from the connection and sends the data to the message channel
 // Note: this is executed for every new connection in separate go routine handling specifically
 // that connection i.e. it ONLY reads from that connection
-func (t *TCPTransport) handleConn(conn *net.TCPConn) {
+func (t *TCPTransport) HandlePeer(peer *TCPPeer, variant GameVariant, version string) {
+	if err := PerformHandshake(peer, variant, version); err != nil {
+		log.Println("ERR perform handshake", "err", err)
+		peer.conn.Close()
+	}
+
+loop:
 	for {
 		buf := make([]byte, 1024)
-		n, err := conn.Read(buf)
+		n, err := peer.conn.Read(buf)
+		if errors.Is(err, net.ErrClosed) {
+			log.Println("Can't Read over closed channel")
+			break loop
+		}
 		if err != nil {
+			peer.conn.Close()
 			slog.Error("ERR tcp read", "err", err)
 		}
 
-		slog.Info("Buff to string", "buff", string(buf[:n]))
+		log.Println("Read Loop Started")
 
 		t.msgChan <- &Message{
-			From:    conn.RemoteAddr(),
-			To:      conn.LocalAddr(),
+			From:    peer.conn.RemoteAddr(),
+			To:      peer.conn.LocalAddr(),
 			Payload: bytes.NewReader(buf[:n]),
 		}
 	}
+
 }
