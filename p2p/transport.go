@@ -2,7 +2,7 @@ package p2p
 
 import "net"
 
-type OnPeer func(Peer)
+type OnPeer func(*TCPPeer) error
 
 type Peer interface {
 	net.Conn
@@ -20,5 +20,4 @@ type Transport interface {
 	AddPeer() <-chan *TCPPeer
 	DelPeer() <-chan *TCPPeer
 	HandlePeer(*TCPPeer, GameVariant, string)
-	// OnPeer(Peer) error
 }
