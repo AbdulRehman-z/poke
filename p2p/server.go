@@ -28,7 +28,6 @@ type ServerConfig struct {
 	GameVariant GameVariant
 	GameVersion string
 	Transport   Transport
-	// OnPeer:
 }
 
 type Server struct {
@@ -55,11 +54,11 @@ func (s *Server) Start() error {
 	return nil
 }
 
-func (s *Server) OnPeer(peer Peer) error {
-	// s.peers[peer.RemoteAddr()] = peer
+func (s *Server) OnPeer(peer *TCPPeer) error {
+	s.peers[peer.conn.RemoteAddr()] = peer
 
-	// peer.Send([]byte("You are added!"))
-	// slog.Info("peer added", "addr", peer.RemoteAddr())
+	peer.Send([]byte("You are added!"))
+	slog.Info("peer added", "addr", peer.conn.RemoteAddr())
 	return nil
 }
 
@@ -70,8 +69,8 @@ func (s *Server) loop() {
 			go SendHandshake(peer, s.GameVariant, s.GameVersion)
 			time.Sleep(1 * time.Second)
 			go s.Transport.HandlePeer(peer, s.GameVariant, s.GameVersion)
-			s.peers[peer.conn.RemoteAddr()] = peer
-			slog.Info("peer added", "peer", peer.conn.RemoteAddr(), "to", s.Transport.Addr())
+			// s.peers[peer.conn.RemoteAddr()] = peer
+			// slog.Info("peer added", "peer", peer.conn.RemoteAddr(), "to", s.Transport.Addr())
 		case peer := <-s.Transport.DelPeer():
 			delete(s.peers, peer.conn.RemoteAddr())
 			slog.Info("peer deleted", "addr", peer.conn.RemoteAddr())
