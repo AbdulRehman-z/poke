@@ -1,6 +1,7 @@
 package p2p
 
 import (
+	"log"
 	"log/slog"
 	"net"
 	"time"
@@ -57,7 +58,7 @@ func (s *Server) Start() error {
 func (s *Server) OnPeer(peer *TCPPeer) error {
 	s.peers[peer.conn.RemoteAddr()] = peer
 
-	peer.Send([]byte("You are added!"))
+	// peer.Send([]byte("You are added!"))
 	slog.Info("peer added", "addr", peer.conn.RemoteAddr())
 	return nil
 }
@@ -66,11 +67,31 @@ func (s *Server) loop() {
 	for {
 		select {
 		case peer := <-s.Transport.AddPeer():
-			go SendHandshake(peer, s.GameVariant, s.GameVersion)
+			if err := PerformHandshake(peer, s.GameVariant, s.GameVersion); err != nil {
+				log.Println("ERR perform handshake", "err", err)
+				// peer.conn.Close()
+				continue
+			}
+
+			// Handle the peer connection
+			go func(t *TCPPeer) {
+				log.Println("Handling Peer")
+				if err := s.Transport.HandlePeer(peer, s.GameVariant, s.GameVersion); err != nil {
+					slog.Error("ERR handle peer", "err", err)
+					// return err
+				}
+			}(peer)
+
 			time.Sleep(1 * time.Second)
-			go s.Transport.HandlePeer(peer, s.GameVariant, s.GameVersion)
-			// s.peers[peer.conn.RemoteAddr()] = peer
-			// slog.Info("peer added", "peer", peer.conn.RemoteAddr(), "to", s.Transport.Addr())
+
+			// If the peer is not outbound, send a handshake
+			if !peer.outbound {
+				// log.Println("Sending Handshake")
+				if err := SendHandshake(peer, s.GameVariant, s.GameVersion); err != nil {
+					slog.Error("ERR send handshake", "err", err)
+					continue
+				}
+			}
 		case peer := <-s.Transport.DelPeer():
 			delete(s.peers, peer.conn.RemoteAddr())
 			slog.Info("peer deleted", "addr", peer.conn.RemoteAddr())
