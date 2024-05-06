@@ -32,13 +32,13 @@ type Message struct {
 }
 
 type TCPTransportOpts struct {
-	Laddr  *net.TCPAddr
-	OnPeer func(Peer) error
-	// Handshake HandshakeFunc
+	Laddr     *net.TCPAddr
+	OnPeer    OnPeer
+	Handshake HandshakeFunc
 }
 
 type TCPTransport struct {
-	TCPTransportOpts
+	*TCPTransportOpts
 	tcpListener *net.TCPListener
 	Handler     Handler
 
@@ -48,7 +48,12 @@ type TCPTransport struct {
 	msgChan     chan *Message
 }
 
-func NewTCPTransport(opts TCPTransportOpts) Transport {
+// // OnPeer implements Transport.
+// func (t *TCPTransport) OnPeer(*TCPPeer) error {
+// 	panic("unimplemented")
+// }
+
+func NewTCPTransport(opts *TCPTransportOpts) *TCPTransport {
 	return &TCPTransport{
 		TCPTransportOpts: opts,
 		Handler:          &DefaultHandler{},
@@ -142,6 +147,15 @@ func (t *TCPTransport) HandlePeer(peer *TCPPeer, variant GameVariant, version st
 	if err := PerformHandshake(peer, variant, version); err != nil {
 		log.Println("ERR perform handshake", "err", err)
 		peer.conn.Close()
+		return
+	}
+
+	if t.OnPeer != nil {
+		if err := t.OnPeer(peer); err != nil {
+			peer.conn.Close()
+			log.Println("Failed to add peer")
+			return
+		}
 	}
 
 loop:
@@ -154,7 +168,8 @@ loop:
 		}
 		if err != nil {
 			peer.conn.Close()
-			slog.Error("ERR tcp read", "err", err)
+			t.delPeerCh <- peer
+			break loop
 		}
 
 		log.Println("Read Loop Started")
@@ -165,5 +180,4 @@ loop:
 			Payload: bytes.NewReader(buf[:n]),
 		}
 	}
-
 }
