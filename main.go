@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func initServer(version string, variant p2p.GameVariant, port int) *p2p.Server {
+func initServer(port int) *p2p.Server {
 	tcpTransportOpts := &p2p.TCPTransportOpts{
 		Laddr: &net.TCPAddr{
 			IP:   net.ParseIP("127.0.0.1"),
@@ -20,8 +20,8 @@ func initServer(version string, variant p2p.GameVariant, port int) *p2p.Server {
 
 	opts := &p2p.ServerConfig{
 		Transport:   t,
-		GameVariant: variant,
-		GameVersion: version,
+		GameVariant: p2p.TexasHoldings,
+		GameVersion: "GGPOKE V0.1-alpha",
 	}
 
 	s := p2p.NewServer(opts)
@@ -30,21 +30,51 @@ func initServer(version string, variant p2p.GameVariant, port int) *p2p.Server {
 }
 
 func main() {
-	s1 := initServer("GGPOKE V0.1-alpha", p2p.TexasHoldings, 3000)
-	s2 := initServer("GGPOKE V0.1-alph", p2p.TexasHoldings, 4000)
+	player1 := initServer(3000)
+	player2 := initServer(4000)
+	// player3 := initServer(5000)
+	// player4 := initServer(6000)
+
+	// start player1
 	go func() {
-		log.Fatal(s1.Start())
+		log.Fatal(player1.Start())
 	}()
 
 	time.Sleep(1 * time.Second)
-
+	//start player2
 	go func() {
-		log.Fatal(s2.Start())
+		log.Fatal(player2.Start())
 	}()
 
+	// time.Sleep(1 * time.Second)
+	//start player3
+	// go func() {
+	// 	log.Fatal(player3.Start())
+	// }()
+
+	// time.Sleep(1 * time.Second)
+	// start player4
+	// go func() {
+	// 	log.Fatal(player4.Start())
+	// }()
+
 	time.Sleep(1 * time.Second)
-	if err := s2.Transport.Dial(3000, p2p.GameVariant(s2.GameVariant), s2.GameVersion); err != nil {
+	// player2 connects with player1, and add player 1 to its peer list
+	if err := player2.Transport.Dial(3000, p2p.GameVariant(player2.GameVariant), player2.GameVersion); err != nil {
 		log.Println(err)
 	}
+
+	// time.Sleep(1 * time.Second)
+
+	// // player3 connects with player2, and add player1 and player2 to its peer list
+	// if err := player3.Transport.Dial(4000, p2p.GameVariant(player2.GameVariant), player2.GameVersion); err != nil {
+	// 	log.Println(err)
+	// }
+
+	// // player4 connects with player2, and add player1, player2 to its peer list
+	// if err := player4.Transport.Dial(5000, p2p.GameVariant(player3.GameVariant), player3.GameVersion); err != nil {
+	// 	log.Println(err)
+	// }
+
 	select {}
 }
