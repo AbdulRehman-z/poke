@@ -1,13 +1,17 @@
 package p2p
 
 import (
-	"bytes"
+	"encoding/gob"
 	"errors"
-	"io"
-	"log"
+	"fmt"
 	"log/slog"
 	"net"
 )
+
+type NetAddr string
+
+func (n NetAddr) String() string  { return string(n) }
+func (n NetAddr) Network() string { return "tcp" }
 
 type TCPPeer struct {
 	conn     *net.TCPConn
@@ -21,14 +25,9 @@ func NewTCPPeer(conn *net.TCPConn) *TCPPeer {
 }
 
 func (p *TCPPeer) Send(msg []byte) error {
+	// log.Println(string(msg))
 	_, err := p.conn.Write(msg)
 	return err
-}
-
-type Message struct {
-	From    net.Addr
-	To      net.Addr
-	Payload io.Reader
 }
 
 type TCPTransportOpts struct {
@@ -40,7 +39,7 @@ type TCPTransportOpts struct {
 type TCPTransport struct {
 	*TCPTransportOpts
 	tcpListener *net.TCPListener
-	Handler     Handler
+	// Handler     Handler
 
 	// mu          sync.RWMutex
 	addPeerChan chan *TCPPeer
@@ -56,10 +55,10 @@ type TCPTransport struct {
 func NewTCPTransport(opts *TCPTransportOpts) *TCPTransport {
 	return &TCPTransport{
 		TCPTransportOpts: opts,
-		Handler:          &DefaultHandler{},
-		addPeerChan:      make(chan *TCPPeer),
-		delPeerCh:        make(chan *TCPPeer),
-		msgChan:          make(chan *Message),
+		// Handler:          &DefaultHandler{},
+		addPeerChan: make(chan *TCPPeer, 100),
+		delPeerCh:   make(chan *TCPPeer),
+		msgChan:     make(chan *Message),
 	}
 }
 
@@ -99,20 +98,25 @@ func (t *TCPTransport) ListenAndAccept() error {
 // Dial implements the Transport interface, it dials a connection to the given port and handles
 // the connection that is returned by the dial i.e it reads from the connection
 func (t *TCPTransport) Dial(port int, gv GameVariant, version string) error {
+	fmt.Printf("Dialing from %s to %d\n", t.tcpListener.Addr(), port)
 	conn, err := net.DialTCP("tcp", nil,
 		&net.TCPAddr{
 			IP:   net.ParseIP("localhost"),
 			Port: port,
 		})
+	// log.Println("Dialed", conn.Remo	)
 	if err != nil {
-		slog.Error("ERR dial failed", "port", port)
+		slog.Error("ERR dial failed", "port", port, err)
+		return err
 	}
 	peer := &TCPPeer{
 		conn:     conn,
 		outbound: true,
 	}
 	t.addPeerChan <- peer
+	// fmt.Printf("Peer added: %s ======= %s\n", peer.conn.RemoteAddr(), peer.conn.LocalAddr())
 
+	fmt.Printf("%s is sending handshake request to %s\n", peer.conn.LocalAddr(), peer.conn.RemoteAddr())
 	return SendHandshake(peer, gv, version)
 }
 
@@ -126,13 +130,16 @@ func (t *TCPTransport) tcpAcceptLoop() {
 		}
 		if err != nil {
 			slog.Error("ERR tcp accept", "err", err)
+			// return
 		}
 
 		peer := &TCPPeer{
 			conn:     conn,
 			outbound: false,
 		}
+
 		t.addPeerChan <- peer
+		fmt.Printf("%s added %s\n", peer.conn.LocalAddr(), peer.conn.RemoteAddr())
 	}
 }
 
@@ -141,23 +148,29 @@ func (t *TCPTransport) tcpAcceptLoop() {
 // that connection i.e. it ONLY reads from that connection
 func (t *TCPTransport) HandlePeer(peer *TCPPeer, variant GameVariant, version string) error {
 	for {
-		buf := make([]byte, 1024)
-		n, err := peer.conn.Read(buf)
-		if errors.Is(err, net.ErrClosed) {
-			return err
-		}
-		if err != nil {
-			peer.conn.Close()
-			t.delPeerCh <- peer
+		// buf := make([]byte, 1024)
+		// n, err := peer.conn.Read(buf)
+		// if errors.Is(err, net.ErrClosed) {
+		// 	return err
+		// }
+		// if err != nil {
+		// 	peer.conn.Close()
+		// 	t.delPeerCh <- peer
+		// 	return err
+		// }
+
+		msg := new(Message)
+		if err := gob.NewDecoder(peer.conn).Decode(msg); err != nil {
 			return err
 		}
 
-		log.Println("Read Loop Started")
+		t.msgChan <- msg
 
-		t.msgChan <- &Message{
-			From:    peer.conn.RemoteAddr(),
-			To:      peer.conn.LocalAddr(),
-			Payload: bytes.NewReader(buf[:n]),
-		}
+		// log.Println("Read Loop Started")
+
+		// t.msgChan <- &Message{
+		// 	From:    peer.conn.RemoteAddr().String(),
+		// 	Payload: bytes.NewReader(buf[:n]),
+		// }
 	}
 }
