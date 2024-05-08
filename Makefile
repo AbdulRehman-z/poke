@@ -1,8 +1,8 @@
-run: build
-	@./bin/poke
-
 build:
-	@go build -o bin/poke main.go
+	@go build -o bin/ggpoker
+
+run: build 
+	@./bin/ggpoker
 
 test:
-	@go test -v ./... -count=1
+	go test -v ./...

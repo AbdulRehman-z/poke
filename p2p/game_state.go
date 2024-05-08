@@ -1,13 +1,15 @@
 package p2p
 
-func (gs GameStatus) String() string {
-	switch gs {
-	case GameStatusDealing:
-		return "DEALING"
+type GameStatus uint32
+
+func (g GameStatus) String() string {
+	switch g {
 	case GameStatusWaiting:
 		return "WAITING"
+	case GameStatusDealing:
+		return "DEALING"
 	case GameStatusPreFlop:
-		return "PRE-FLOP"
+		return "PRE FLP"
 	case GameStatusFlop:
 		return "FLOP"
 	case GameStatusTurn:
@@ -19,8 +21,6 @@ func (gs GameStatus) String() string {
 	}
 }
 
-type GameStatus uint32
-
 const (
 	GameStatusWaiting GameStatus = iota
 	GameStatusDealing
@@ -31,10 +31,14 @@ const (
 )
 
 type GameState struct {
-	isDealer   bool // should be atomic accessiable
-	gameStatus GameStatus
+	isDealer   bool       // should be atomic accessable !
+	gameStatus GameStatus // should be atomic accessable !
 }
 
 func NewGameState() *GameState {
 	return &GameState{}
+}
+
+func (g *GameState) loop() {
+
 }
