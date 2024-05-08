@@ -8,8 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"strconv"
-	"strings"
-	"time"
+	"sync"
 )
 
 type GameVariant uint8
@@ -31,25 +30,38 @@ const (
 )
 
 type ServerConfig struct {
+	ListenAddr  *net.TCPAddr
 	GameVariant GameVariant
 	GameVersion string
-	Transport   Transport
+	Transport   *TCPTransport
 }
 
 type Server struct {
 	*ServerConfig
-	// Handler Handler
 
-	// mu    sync.RWMutex
-	peers map[net.Addr]*TCPPeer
+	mu      sync.RWMutex
+	peers   map[net.Addr]*TCPPeer
+	addPeer chan *TCPPeer
+	delPeer chan *TCPPeer
+	msgChan chan *Message
 }
 
 func NewServer(opts *ServerConfig) *Server {
-	return &Server{
+
+	s := &Server{
 		ServerConfig: opts,
-		// Handler:      &DefaultHandler{},
-		peers: make(map[net.Addr]*TCPPeer),
+		peers:        make(map[net.Addr]*TCPPeer),
+		addPeer:      make(chan *TCPPeer, 20),
+		delPeer:      make(chan *TCPPeer),
+		msgChan:      make(chan *Message),
 	}
+
+	tcpTransport := NewTCPTransport(s.ListenAddr)
+	s.Transport = tcpTransport
+	tcpTransport.addPeerChan = s.addPeer
+	tcpTransport.delPeerCh = s.delPeer
+	tcpTransport.msgChan = s.msgChan
+	return s
 }
 
 func (s *Server) Start() error {
@@ -60,10 +72,37 @@ func (s *Server) Start() error {
 	return nil
 }
 
+func (s *Server) Dial(port int, gv GameVariant, version string, serverLAddr string) error {
+	// if t.tcpListener.Addr().String() == serverLAddr {
+	// 	return nil
+	// }
+
+	// fmt.Printf("Dialing from %s to %d\n", t.tcpListener.Addr(), port)
+	conn, err := net.DialTCP("tcp", nil,
+		&net.TCPAddr{
+			IP:   net.ParseIP("localhost"),
+			Port: port,
+		})
+	// log.Println("Dialed", conn.Remo	)
+	if err != nil {
+		slog.Error("ERR dial failed", "port", port, err)
+		return err
+	}
+	peer := &TCPPeer{
+		conn:       conn,
+		outbound:   true,
+		listenAddr: serverLAddr,
+	}
+	s.addPeer <- peer
+	// fmt.Printf("%s added 127.0.0.1:%d\n", serverLAddr, port)
+
+	// fmt.Printf("%s is sending handshake request to 127.0.0.1:%d\n", serverLAddr, port)
+	return s.SendHandshake(peer)
+}
+
 func (s *Server) OnPeer(peer *TCPPeer) error {
 	s.peers[peer.conn.RemoteAddr()] = peer
 
-	// peer.Send([]byte("You are added!"))
 	slog.Info("peer added", "addr", peer.conn.RemoteAddr())
 	return nil
 }
@@ -71,45 +110,15 @@ func (s *Server) OnPeer(peer *TCPPeer) error {
 func (s *Server) loop() {
 	for {
 		select {
-		case peer := <-s.Transport.AddPeer():
-			if err := PerformHandshake(peer, s.GameVariant, s.GameVersion, s.Transport.Addr()); err != nil {
-				log.Println("ERR perform handshake", "err", err)
-				// peer.conn.Close()
-				continue
+		case peer := <-s.addPeer:
+			if err := s.handlePeer(peer); err != nil {
+				slog.Error("ERR handle peer", "err", err)
 			}
-
-			// Handle the peer connection
-			go func(t *TCPPeer) {
-				log.Println("Handling Peer")
-				if err := s.Transport.HandlePeer(peer, s.GameVariant, s.GameVersion); err != nil {
-					slog.Error("ERR handle peer", "err", err)
-					// return err
-				}
-			}(peer)
-
-			time.Sleep(1 * time.Second)
-
-			// If the peer is not outbound, send a handshake
-			if !peer.outbound {
-				// log.Println("Sending Handshake")
-				if err := SendHandshake(peer, s.GameVariant, s.GameVersion); err != nil {
-					slog.Error("ERR send handshake", "err", err)
-					continue
-				}
-				// time.Sleep( * time.Second)
-
-				if err := s.sendPeerList(peer); err != nil {
-					slog.Error("ERR send peerlist", "err", err, "to", peer.conn.RemoteAddr())
-					continue
-				}
-
-			}
-
 			s.peers[peer.conn.RemoteAddr()] = peer
-		case peer := <-s.Transport.DelPeer():
+		case peer := <-s.delPeer:
 			delete(s.peers, peer.conn.RemoteAddr())
 			slog.Info("peer deleted", "addr", peer.conn.RemoteAddr())
-		case msg := <-s.Transport.Consume():
+		case msg := <-s.msgChan:
 			if err := s.handleMessage(msg); err != nil {
 				slog.Error("ERR handle message", "err", err)
 			}
@@ -119,18 +128,19 @@ func (s *Server) loop() {
 
 func (s *Server) sendPeerList(p *TCPPeer) error {
 	peerList := &MessagePeerList{
-		Peers: make([]string, len(s.peers)),
+		Peers: []string{},
 	}
 
-	msg := NewMessage(s.Transport.Addr(), peerList)
+	msg := NewMessage(s.ListenAddr.String(), peerList)
 
-	i := 0
-	for peer := range s.peers {
-		peerList.Peers[i] = peer.String()
-		i++
+	for _, peer := range s.peers {
+		peerList.Peers = append(peerList.Peers, peer.listenAddr)
+	}
+	if len(peerList.Peers) == 0 {
+		return nil
 	}
 
-	slog.Info("Peer list", "to", p.conn.RemoteAddr(), "list", strings.Join(peerList.Peers, ""))
+	// slog.Info("Peer list", "to", p.conn.RemoteAddr(), "list", strings.Join(peerList.Peers, ""))
 
 	buf := new(bytes.Buffer)
 	if err := gob.NewEncoder(buf).Encode(msg); err != nil {
@@ -145,32 +155,11 @@ func (s *Server) handleMessage(msg *Message) error {
 	switch v := msg.Payload.(type) {
 	case MessagePeerList:
 		return s.handlePeerList(v)
-		// case Message:
-		// 	return nil
 	}
 	return nil
 }
 
 func (s *Server) handlePeerList(pl MessagePeerList) error {
-	// i := 0
-	// for _, peer := range pl.Peers {
-	// 	//extract the port from the address
-	// 	_, p, err := net.SplitHostPort(peer)
-	// 	if err != nil {
-	// 		return err
-	// 	}
-
-	// 	// convert port to int
-	// 	port, error := strconv.Atoi(p)
-	// 	if error != nil {
-	// 		slog.Error("ERR int to str conv", "err", error)
-	// 	}
-	// 	if err := s.Transport.Dial(port, s.GameVariant, s.GameVersion); err != nil {
-	// 		slog.Error("Err failed to dial peer", "At port", port)
-	// 	}
-	// 	i++
-	// }
-
 	for i := 0; i < len(pl.Peers); i++ {
 		// extract the port from the address
 		fmt.Printf("peerlist => %s\n", pl.Peers)
@@ -186,16 +175,87 @@ func (s *Server) handlePeerList(pl MessagePeerList) error {
 			slog.Error("ERR int to str conv", "err", errr)
 		}
 
-		log.Println(port)
-
-		// panic("adwada")
-
-		if err := s.Transport.Dial(port, s.GameVariant, s.GameVersion); err != nil {
+		if err := s.Dial(port, s.GameVariant, s.GameVersion, s.ListenAddr.String()); err != nil {
 			slog.Error("Err failed to dial peer", "At port", port)
 		}
 	}
 
 	return nil
+}
+
+func (s *Server) handlePeer(peer *TCPPeer) error {
+	hp, err := s.PerformHandshake(peer)
+	if err != nil {
+		log.Println("ERR perform handshake", "err", err)
+	}
+
+	// Handle the peer connection
+	go func(t *TCPPeer) {
+		// log.Println("Handling Peer")
+		if err := s.Transport.HandlePeer(peer, s.GameVariant, s.GameVersion); err != nil {
+			slog.Error("ERR handle peer", "err", err)
+		}
+	}(peer)
+
+	// If the peer is not outbound, send a handshake
+	if !peer.outbound {
+		if err := s.SendHandshake(peer); err != nil {
+			slog.Error("ERR send handshake", "err", err)
+		}
+		if err := s.sendPeerList(peer); err != nil {
+			slog.Error("ERR send peerlist", "err", err, "to", peer.conn.RemoteAddr())
+		}
+
+	}
+
+	slog.Info("Added new connected", "peer", peer.conn.RemoteAddr(), "listenAddr", hp.ListenAddr,
+		"variant", hp.GameVariant, "version", hp.Version, "we", s.ListenAddr)
+
+	return nil
+}
+
+type HandshakePass struct {
+	// GameStatus  GameStatus
+	GameVariant GameVariant
+	Version     string
+	ListenAddr  string
+}
+
+func (s *Server) PerformHandshake(p *TCPPeer) (*HandshakePass, error) {
+	hp := &HandshakePass{}
+	if err := gob.NewDecoder(p.conn).Decode(hp); err != nil {
+		return nil, err
+	}
+
+	// fmt.Printf("Peer listen addr: %s\n", p.listenAddr)
+
+	if hp.GameVariant != s.GameVariant {
+		return nil, fmt.Errorf("Game variant mismatch: %v != %v", hp.GameVariant, s.GameVariant)
+	}
+
+	if hp.Version != s.GameVersion {
+		return nil, fmt.Errorf("Game version mismatch: %v != %v", hp.Version, s.GameVersion)
+	}
+
+	p.listenAddr = hp.ListenAddr
+
+	// fmt.Printf("%s has successfully performed handshake with %s\n", addr, p.conn.RemoteAddr())
+	return hp, nil
+}
+
+func (s *Server) SendHandshake(p *TCPPeer) error {
+	hp := &HandshakePass{
+		GameVariant: s.GameVariant,
+		Version:     s.GameVersion,
+		ListenAddr:  s.ListenAddr.String(),
+	}
+
+	buf := new(bytes.Buffer)
+	if err := gob.NewEncoder(buf).Encode(hp); err != nil {
+		slog.Error("ERR send handshake", err, p.conn.RemoteAddr())
+	}
+
+	return p.Send(buf.Bytes())
 }
 
 func init() {
