@@ -8,24 +8,27 @@ import (
 )
 
 func initServer(port int) *p2p.Server {
-	tcpTransportOpts := &p2p.TCPTransportOpts{
-		Laddr: &net.TCPAddr{
-			IP:   net.ParseIP("127.0.0.1"),
-			Port: port,
-		},
-		Handshake: p2p.PerformHandshake,
+	// tcpTransportOpts := &p2p.TCPTransportOpts{
+	// 	Laddr: &net.TCPAddr{
+	// 		IP:   net.ParseIP("127.0.0.1"),
+	// 		Port: port,
+	// 	},
+	// 	// Handshake: p2p.PerformHandshake,
+	// }
+
+	// t := p2p.NewTCPTransport(tcpTransportOpts)
+	laddr := &net.TCPAddr{
+		IP:   net.ParseIP("localhost"),
+		Port: port,
 	}
 
-	t := p2p.NewTCPTransport(tcpTransportOpts)
-
 	opts := &p2p.ServerConfig{
-		Transport:   t,
+		ListenAddr:  laddr,
 		GameVariant: p2p.TexasHoldings,
 		GameVersion: "GGPOKE V0.1-alpha",
 	}
 
 	s := p2p.NewServer(opts)
-	t.OnPeer = s.OnPeer
 	return s
 }
 
@@ -47,7 +50,7 @@ func main() {
 	}()
 
 	// time.Sleep(1 * time.Second)
-	//start player3
+	// // start player3
 	// go func() {
 	// 	log.Fatal(player3.Start())
 	// }()
@@ -60,14 +63,14 @@ func main() {
 
 	time.Sleep(1 * time.Second)
 	// player2 connects with player1, and add player 1 to its peer list
-	if err := player2.Transport.Dial(3000, p2p.GameVariant(player2.GameVariant), player2.GameVersion); err != nil {
+	if err := player2.Dial(3000, p2p.GameVariant(player2.GameVariant), player2.GameVersion, player2.ListenAddr.String()); err != nil {
 		log.Println(err)
 	}
 
-	// time.Sleep(1 * time.Second)
+	time.Sleep(1 * time.Second)
 
-	// // player3 connects with player2, and add player1 and player2 to its peer list
-	// if err := player3.Transport.Dial(4000, p2p.GameVariant(player2.GameVariant), player2.GameVersion); err != nil {
+	// player3 connects with player2, and add player1 and player2 to its peer list
+	// if err := player3.Transport.Dial(4000, p2p.GameVariant(player2.GameVariant), player2.GameVersion, player2.ListenAddr); err != nil {
 	// 	log.Println(err)
 	// }
 
