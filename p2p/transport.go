@@ -15,9 +15,9 @@ type Peer interface {
 type Transport interface {
 	ListenAndAccept() error
 	Addr() string
-	Dial(int, GameVariant, string) error
+	Dial(int, GameVariant, string, string) error
 	Consume() <-chan *Message
-	AddPeer() <-chan *TCPPeer
+	AddPeer() chan *TCPPeer
 	DelPeer() <-chan *TCPPeer
 	HandlePeer(*TCPPeer, GameVariant, string) error
 }
