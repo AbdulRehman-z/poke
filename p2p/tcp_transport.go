@@ -34,7 +34,7 @@ func (p *Peer) ReadLoop(msgch chan *Message) {
 		msgch <- msg
 	}
 
-	// TODO(@anthdm): unregister this peer!!!
+	// TODO(@AbdulRehman-z): unregister this peer!!!
 	p.conn.Close()
 }
 
