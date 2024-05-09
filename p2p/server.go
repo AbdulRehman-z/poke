@@ -38,12 +38,13 @@ type ServerConfig struct {
 type Server struct {
 	ServerConfig
 
-	transport *TCPTransport
-	peerLock  sync.RWMutex
-	peers     map[net.Addr]*Peer
-	addPeer   chan *Peer
-	delPeer   chan *Peer
-	msgCh     chan *Message
+	transport   *TCPTransport
+	peerLock    sync.RWMutex
+	peers       map[net.Addr]*Peer
+	addPeer     chan *Peer
+	delPeer     chan *Peer
+	msgCh       chan *Message
+	broadcastCh chan any
 
 	gameState *GameState
 }
@@ -54,8 +55,12 @@ func NewServer(cfg ServerConfig) *Server {
 		peers:        make(map[net.Addr]*Peer),
 		addPeer:      make(chan *Peer, 10),
 		delPeer:      make(chan *Peer),
-		msgCh:        make(chan *Message),
-		gameState:    NewGameState(),
+		msgCh:        make(chan *Message, 20),
+		broadcastCh:  make(chan any),
+	}
+	s.gameState = NewGameState(s.ListenAddr, s.broadcastCh)
+	if s.ListenAddr == ":3000" {
+		s.gameState.isDealer = true
 	}
 
 	tr := NewTCPTransport(s.ListenAddr)
@@ -75,7 +80,33 @@ func (s *Server) Start() {
 		"variant": s.GameVariant,
 	}).Info("started new game server")
 
+	go func() {
+		msg := <-s.broadcastCh
+		if err := s.Broadcast(msg); err != nil {
+			logrus.Errorf("failed to broadcast message: %s", err)
+		}
+	}()
+
 	s.transport.ListenAndAccept()
+}
+
+func (s *Server) Broadcast(payload any) error {
+	msg := NewMessage(s.ListenAddr, payload)
+
+	buf := new(bytes.Buffer)
+	if err := gob.NewEncoder(buf).Encode(msg); err != nil {
+		return err
+	}
+
+	for _, peer := range s.peers {
+		go func(peer *Peer) {
+			if err := peer.Send(buf.Bytes()); err != nil {
+				logrus.Errorf("failed to send broadcast message: %s", err)
+			}
+		}(peer)
+	}
+
+	return nil
 }
 
 func (s *Server) sendPeerList(p *Peer) error {
@@ -285,4 +316,5 @@ func (s *Server) handlePeerList(l MessagePeerList) error {
 
 func init() {
 	gob.Register(MessagePeerList{})
+	gob.Register(MessageCards{})
 }
