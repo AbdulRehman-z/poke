@@ -1,5 +1,5 @@
 build:
-	@go build -o bin/poke
+	@go build -o bin/poke main.go
 
 run: build 
 	@./bin/poke
