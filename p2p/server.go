@@ -90,12 +90,6 @@ func (s *Server) sendPeerList(p *Peer) error {
 		}
 	}
 
-	// fmt.Printf("%s: my peerlist %+v\n", s.ListenAddr, peerList.Peers)
-
-	// for _, peer := range s.peers {
-	// 	peerList.Peers = append(peerList.Peers, peer.listenAddr)
-	// }
-
 	if len(peerList.Peers) == 0 {
 		return nil
 	}
@@ -156,7 +150,7 @@ func (s *Server) isInPeerList(addr string) bool {
 	return false
 }
 
-// TODO(@anthdm): Right now we have some redundent code in registering new peers to the game network.
+// TODO(@AbdulREhman-z): Right now we have some redundent code in registering new peers to the game network.
 // maybe construct a new peer and handshake protocol after registering a plain connection?
 func (s *Server) Connect(addr string) error {
 	if s.isInPeerList(addr) {
@@ -183,6 +177,7 @@ func (s *Server) loop() {
 		select {
 		case peer := <-s.delPeer:
 			logrus.WithFields(logrus.Fields{
+
 				"addr": peer.conn.RemoteAddr(),
 			}).Info("new player disconnected")
 
@@ -239,8 +234,8 @@ func (s *Server) handleNewPeer(peer *Peer) error {
 		"we":         s.ListenAddr,
 	}).Info("handshake successfull: new player connected")
 
-	// s.peers[peer.conn.RemoteAddr()] = peer
 	s.AddPeer(peer)
+	s.gameState.AddNewPlayer(peer.listenAddr, hs.GameStatus)
 
 	return nil
 }
@@ -271,7 +266,7 @@ func (s *Server) handleMessage(msg *Message) error {
 	return nil
 }
 
-// TODO FIXME: (@anthdm) maybe goroutine??
+// TODO FIXME: (@abdulre) maybe goroutine??
 func (s *Server) handlePeerList(l MessagePeerList) error {
 	logrus.WithFields(logrus.Fields{
 		"we":   s.ListenAddr,
