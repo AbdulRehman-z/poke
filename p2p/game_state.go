@@ -9,12 +9,14 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type GameStatus uint32
+type GameStatus int32
 
 func (g GameStatus) String() string {
 	switch g {
 	case GameStatusWaitingForCards:
 		return "WAITING FOR CARDS"
+	case GameStatusReceivingCards:
+		return "RECEIVING CARDS"
 	case GameStatusDealing:
 		return "DEALING"
 	case GameStatusPreFlop:
@@ -32,6 +34,7 @@ func (g GameStatus) String() string {
 
 const (
 	GameStatusWaitingForCards GameStatus = iota
+	GameStatusReceivingCards
 	GameStatusDealing
 	GameStatusPreFlop
 	GameStatusFlop
@@ -72,6 +75,12 @@ func (g *GameState) AddPlayerWaitingForCards() {
 	atomic.AddInt32(&g.playersWaitingForCards, 1)
 }
 
+func (g *GameState) SetStatus(status GameStatus) {
+	if g.gameStatus != status {
+		atomic.StoreInt32((*int32)(&g.gameStatus), int32(status))
+	}
+}
+
 func (g *GameState) CheckNeedDealCards() {
 	playersWaiting := atomic.LoadInt32(&g.playersWaitingForCards)
 
@@ -83,8 +92,14 @@ func (g *GameState) CheckNeedDealCards() {
 			"players connected": len(g.players),
 		}).Info("deal cards")
 
-		g.DealCards()
+		g.InitiateShuffleAndDeal()
 	}
+}
+
+func (g *GameState) InitiateShuffleAndDeal() {
+	g.SetStatus(GameStatusReceivingCards)
+
+	g.broadcastCh <- MessageEncCards{Deck: [][]byte{}}
 }
 
 func (g *GameState) DealCards() {
@@ -134,6 +149,7 @@ func (g *GameState) loop() {
 		select {
 		case <-ticker.C:
 			logrus.WithFields(logrus.Fields{
+				"me":                g.ListenAddr,
 				"players connected": g.LenPlayersConnected(),
 				"game status":       g.gameStatus,
 			}).Info()
