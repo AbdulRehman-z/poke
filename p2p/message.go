@@ -28,3 +28,7 @@ type MessagePeerList struct {
 type MessageCards struct {
 	Deck deck.Deck
 }
+
+type MessageEncCards struct {
+	Deck [][]byte
+}
