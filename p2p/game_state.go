@@ -5,7 +5,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/anthdm/ggpoker/deck"
 	"github.com/sirupsen/logrus"
 )
 
@@ -52,32 +51,60 @@ type GameState struct {
 	isDealer   bool       // should be atomic accessable !
 	gameStatus GameStatus // should be atomic accessable !
 
+	broadcastCh chan BroadcastToPeers
+
 	playersWaitingForCards int32
 	playersLock            sync.RWMutex
 	players                map[string]*Player
-	broadcastCh            chan any
+
+	decksReceivedLock sync.RWMutex
+	decksReceived     map[string]bool
 }
 
-func NewGameState(addr string, broadcastCh chan any) *GameState {
+func NewGameState(addr string, broadcastCh chan BroadcastToPeers) *GameState {
 	g := &GameState{
-		ListenAddr:  addr,
-		isDealer:    false,
-		gameStatus:  GameStatusWaitingForCards,
-		players:     make(map[string]*Player),
-		broadcastCh: broadcastCh,
+		ListenAddr:    addr,
+		isDealer:      false,
+		gameStatus:    GameStatusWaitingForCards,
+		players:       make(map[string]*Player),
+		broadcastCh:   broadcastCh,
+		decksReceived: map[string]bool{},
 	}
 
 	go g.loop()
 	return g
 }
 
+func (g *GameState) ShuffleAndEnc(from string, deck [][]byte) error {
+	g.SetStatus(GameStatusReceivingCards)
+
+	g.decksReceivedLock.Lock()
+	g.decksReceived[from] = true
+	g.decksReceivedLock.Unlock()
+
+	g.SendToPlayersWithStatus(MessageEncCards{Deck: deck}, GameStatusReceivingCards)
+
+	g.playersLock.RLock()
+	for addr := range g.players {
+		_, ok := g.decksReceived[addr]
+		if !ok {
+			return nil
+		}
+	}
+	g.playersLock.RUnlock()
+
+	g.SetStatus(GameStatusPreFlop)
+
+	return nil
+}
+
 func (g *GameState) AddPlayerWaitingForCards() {
 	atomic.AddInt32(&g.playersWaitingForCards, 1)
 }
 
-func (g *GameState) SetStatus(status GameStatus) {
-	if g.gameStatus != status {
-		atomic.StoreInt32((*int32)(&g.gameStatus), int32(status))
+func (g *GameState) SetStatus(s GameStatus) {
+	if g.gameStatus != s {
+		atomic.StoreInt32((*int32)(&g.gameStatus), int32(s))
 	}
 }
 
@@ -99,12 +126,25 @@ func (g *GameState) CheckNeedDealCards() {
 func (g *GameState) InitiateShuffleAndDeal() {
 	g.SetStatus(GameStatusReceivingCards)
 
-	g.broadcastCh <- MessageEncCards{Deck: [][]byte{}}
+	// g.broadcastCh <- MessageEncCards{Deck: [][]byte{}}
+	g.SendToPlayersWithStatus(MessageEncCards{Deck: [][]byte{}}, GameStatusWaitingForCards)
 }
 
-func (g *GameState) DealCards() {
+func (g *GameState) SendToPlayersWithStatus(msg MessageEncCards, status GameStatus) {
+	players := g.GetPlayersWithStatus(status)
 
-	g.broadcastCh <- MessageCards{Deck: deck.New()}
+	g.broadcastCh <- BroadcastToPeers{
+		To:      players,
+		Payload: msg,
+	}
+}
+
+func (g *GameState) GetPlayersWithStatus(s GameStatus) []string {
+	players := []string{}
+	for addr := range g.players {
+		players = append(players, addr)
+	}
+	return players
 }
 
 func (g *GameState) SetPlayerStatus(addr string, status GameStatus) {
