@@ -32,3 +32,8 @@ type MessageCards struct {
 type MessageEncCards struct {
 	Deck [][]byte
 }
+
+type BroadcastToPeers struct {
+	To      []string
+	Payload any
+}
