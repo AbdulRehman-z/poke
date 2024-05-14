@@ -303,10 +303,19 @@ func (s *Server) handleMessage(msg *Message) error {
 	case MessagePeerList:
 		return s.handlePeerList(v)
 	case MessageEncCards:
-		return s.gameState.ShuffleAndEnc(msg.From, v.Deck)
+		// return s.gameState.ShuffleAndEnc(msg.From, v.Deck)
 		// return s.handleCards(v)
 	}
 	return nil
+}
+
+func (s *Server) handleEncDeck(from string, deck [][]byte) error {
+	logrus.WithFields(logrus.Fields{
+		"we":   s.ListenAddr,
+		"from": from,
+	}).Info("received enc deck")
+
+	return s.gameState.ShuffleAndEncrypt(from, deck)
 }
 
 // TODO FIXME: (@AbdulRehman-z) maybe goroutine??
@@ -339,4 +348,5 @@ func init() {
 	gob.Register(MessagePeerList{})
 	gob.Register(MessageCards{})
 	gob.Register(MessageEncCards{})
+	gob.Register(BroadcastToPeers{})
 }
