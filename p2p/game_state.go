@@ -1,6 +1,8 @@
 package p2p
 
 import (
+	"fmt"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -16,7 +18,7 @@ func (g GameStatus) String() string {
 		return "WAITING FOR CARDS"
 	case GameStatusReceivingCards:
 		return "RECEIVING CARDS"
-	case GameStatusShuffleAndEncrypt:
+	case GameStatusShuffleEncryptANdDeal:
 		return " SHUFFLING AND ENCRYPTING"
 	case GameStatusDealing:
 		return "DEALING"
@@ -36,7 +38,7 @@ func (g GameStatus) String() string {
 const (
 	GameStatusWaitingForCards GameStatus = iota
 	GameStatusReceivingCards
-	GameStatusShuffleAndEncrypt
+	GameStatusShuffleEncryptANdDeal
 	GameStatusDealing
 	GameStatusPreFlop
 	GameStatusFlop
@@ -44,9 +46,25 @@ const (
 	GameStatusRiver
 )
 
+type PlayersList []*Player
+
+func (list PlayersList) Len() int { return len(list) }
+func (list PlayersList) Swap(i, j int) {
+	list[i], list[j] = list[j], list[i]
+}
+func (list PlayersList) Less(i, j int) bool {
+	portI, _ := strconv.Atoi(list[i].ListenAddr[:1])
+	portJ, _ := strconv.Atoi(list[j].ListenAddr[:1])
+	return portI < portJ
+}
+
 type Player struct {
 	ListenAddr string
 	Status     GameStatus
+}
+
+func (p *Player) String() string {
+	return fmt.Sprintf("%s:%s", p.ListenAddr, p.Status)
 }
 
 type GameState struct {
@@ -54,7 +72,7 @@ type GameState struct {
 
 	isDealer    bool       // should be atomic accessable !
 	gameStatus  GameStatus // should be atomic accessable !
-	playersList []*Player
+	playersList PlayersList
 
 	broadcastCh chan BroadcastToPeers
 
@@ -77,16 +95,52 @@ func NewGameState(addr string, broadcastCh chan BroadcastToPeers) *GameState {
 		decksReceived: map[string]bool{},
 	}
 
+	g.AddNewPlayer(g.ListenAddr, GameStatusWaitingForCards)
+
 	go g.loop()
 	return g
 }
 
+func (g *GameState) prevPosition() int {
+	ourPosition := g.ourPosition()
+
+	if ourPosition == 0 {
+		return len(g.playersList) - 1
+	}
+
+	return ourPosition - 1
+}
+
+func (g *GameState) ourPosition() int {
+	for i := 0; i < len(g.playersList); i++ {
+		if g.playersList[i].ListenAddr == g.ListenAddr {
+			return i
+		}
+	}
+	panic("player existance can no where to be found in the playerlist")
+}
+
+func (g *GameState) nextPosition() int {
+	ourPosition := g.ourPosition()
+
+	if ourPosition == len(g.playersList)-1 {
+		return 0
+	}
+
+	return ourPosition + 1
+}
+
 func (g *GameState) ShuffleAndEncrypt(from string, deck [][]byte) error {
+	g.SetPlayerStatus(from, GameStatusShuffleEncryptANdDeal)
 
-	dealToPlayer := g.playersList[0]
+	prevPlayer := g.playersList[g.prevPosition()]
+	if g.isDealer && from == prevPlayer.ListenAddr {
+		logrus.Info("shuffle and encryption round trip compleed")
+		return nil
+	}
 
+	dealToPlayer := g.playersList[g.nextPosition()]
 	g.SendToPlayer(dealToPlayer.ListenAddr, deck)
-	g.SetStatus(GameStatusShuffleAndEncrypt)
 
 	return nil
 }
@@ -105,8 +159,6 @@ func (g *GameState) CheckNeedDealCards() {
 	playersWaiting := atomic.LoadInt32(&g.playersWaitingForCards)
 
 	if playersWaiting == int32(len(g.players)) && g.isDealer && g.gameStatus == GameStatusWaitingForCards {
-		// panic("implement me")
-
 		logrus.WithFields(logrus.Fields{
 			"players waiting":   playersWaiting,
 			"players connected": len(g.players),
@@ -117,10 +169,10 @@ func (g *GameState) CheckNeedDealCards() {
 }
 
 func (g *GameState) InitiateShuffleAndDeal() {
-	dealToPlayer := g.playersList[0]
+	dealToPlayer := g.playersList[g.ourPosition()]
 
 	g.SendToPlayer(dealToPlayer.ListenAddr, MessageEncCards{Deck: [][]byte{}})
-	g.SetStatus(GameStatusShuffleAndEncrypt)
+	g.SetStatus(GameStatusShuffleEncryptANdDeal)
 }
 
 func (g *GameState) SendToPlayer(addr string, payload any) {
@@ -156,7 +208,6 @@ func (g *GameState) GetPlayersWithStatus(s GameStatus) []string {
 func (g *GameState) SetPlayerStatus(addr string, status GameStatus) {
 	player, ok := g.players[addr]
 	if !ok {
-		// panic("player not found")
 		return
 	}
 	player.Status = status
@@ -199,7 +250,7 @@ func (g *GameState) loop() {
 		case <-ticker.C:
 			logrus.WithFields(logrus.Fields{
 				"me":                g.ListenAddr,
-				"players connected": g.LenPlayersConnected(),
+				"players connected": g.playersList,
 				"game status":       g.gameStatus,
 			}).Info()
 		default:
