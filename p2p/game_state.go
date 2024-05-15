@@ -2,6 +2,7 @@ package p2p
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -226,6 +227,7 @@ func (g *GameState) AddNewPlayer(addr string, status GameStatus) {
 	}
 	g.players[addr] = player
 	g.playersList = append(g.playersList, player)
+	sort.Sort(g.playersList)
 
 	g.SetPlayerStatus(addr, status)
 
