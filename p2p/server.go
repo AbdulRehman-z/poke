@@ -303,8 +303,7 @@ func (s *Server) handleMessage(msg *Message) error {
 	case MessagePeerList:
 		return s.handlePeerList(v)
 	case MessageEncCards:
-		// return s.gameState.ShuffleAndEnc(msg.From, v.Deck)
-		// return s.handleCards(v)
+		return s.handleEncDeck(msg.From, v.Deck)
 	}
 	return nil
 }
@@ -331,15 +330,6 @@ func (s *Server) handlePeerList(l MessagePeerList) error {
 			continue
 		}
 	}
-
-	return nil
-}
-
-func (s *Server) handleCards(c MessageEncCards) error {
-	logrus.WithFields(logrus.Fields{
-		"me":    s.ListenAddr,
-		"cards": c.Deck,
-	}).Info("received cards message")
 
 	return nil
 }
