@@ -1,6 +1,6 @@
 package p2p
 
-import "github.com/anthdm/ggpoker/deck"
+import "github.com/AbdulRehman-z/poke/deck"
 
 type Message struct {
 	Payload any
@@ -36,4 +36,10 @@ type MessageEncCards struct {
 type BroadcastToPeers struct {
 	To      []string
 	Payload any
+}
+
+type MessageReady struct{}
+
+func (msg MessageReady) String() string {
+	return "READY"
 }
