@@ -1,6 +1,7 @@
 package p2p
 
 import (
+	"fmt"
 	"sort"
 	"strconv"
 	"sync"
@@ -18,10 +19,6 @@ func (g GameStatus) String() string {
 		return "CONNECTED"
 	case GameStatusReady:
 		return "PLAYER READY"
-	case GameStatusReceivingCards:
-		return "RECEIVING CARDS"
-	case GameStatusShuffleEncryptANdDeal:
-		return " SHUFFLING AND ENCRYPTING"
 	case GameStatusDealing:
 		return "DEALING"
 	case GameStatusPreFlop:
@@ -40,8 +37,6 @@ func (g GameStatus) String() string {
 const (
 	GameStatusConnected GameStatus = iota
 	GameStatusReady
-	GameStatusReceivingCards
-	GameStatusShuffleEncryptANdDeal
 	GameStatusDealing
 	GameStatusPreFlop
 	GameStatusFlop
@@ -49,30 +44,9 @@ const (
 	GameStatusRiver
 )
 
-type Game struct {
-	listenAddr    string
-	broadcastCh   chan BroadcastToPeers
-	currentStatus GameStatus
-	playersList   PlayersList
-	playersReady  *PlayersReady
-}
-
 type PlayersReady struct {
-	recvStatutesLock sync.RWMutex
-	recvStatutes     map[string]bool
-}
-
-func NewGame(addr string, broadcastCh chan BroadcastToPeers) *Game {
-	g := &Game{
-		listenAddr:    addr,
-		broadcastCh:   broadcastCh,
-		currentStatus: GameStatusConnected,
-		playersList:   PlayersList{},
-		playersReady:  NewPlayersReady(),
-	}
-
-	go g.loop()
-	return g
+	mu           sync.RWMutex
+	recvStatutes map[string]bool
 }
 
 func NewPlayersReady() *PlayersReady {
@@ -81,98 +55,248 @@ func NewPlayersReady() *PlayersReady {
 	}
 }
 
-func (g *Game) setStatus(s GameStatus) {
-	if g.currentStatus != s {
-		atomic.AddInt32((*int32)(&g.currentStatus), int32(s))
+func (pr *PlayersReady) haveRecv(from string) bool {
+	pr.mu.RLock()
+	defer pr.mu.RUnlock()
+
+	_, ok := pr.recvStatutes[from]
+
+	return ok
+}
+
+func (pr *PlayersReady) addRecvStatus(from string) {
+	pr.mu.Lock()
+	defer pr.mu.Unlock()
+
+	pr.recvStatutes[from] = true
+}
+
+func (pr *PlayersReady) len() int {
+	pr.mu.RLock()
+	defer pr.mu.RUnlock()
+
+	return len(pr.recvStatutes)
+}
+
+func (pr *PlayersReady) clear() {
+	pr.mu.Lock()
+	defer pr.mu.Unlock()
+
+	pr.recvStatutes = make(map[string]bool)
+}
+
+type Game struct {
+	listenAddr  string
+	broadcastch chan BroadcastToPeers
+
+	// currentStatus should be atomically accessable.
+	currentStatus GameStatus
+	// currentDealer should be atomically accessable.
+	// NOTE: this will be -1 when the game is in a bootstrapped state.
+	currentDealer int32
+
+	playersReady *PlayersReady
+
+	playersList PlayersList
+}
+
+func NewGame(addr string, bc chan BroadcastToPeers) *Game {
+	g := &Game{
+		listenAddr:    addr,
+		broadcastch:   bc,
+		currentStatus: GameStatusConnected,
+		playersReady:  NewPlayersReady(),
+		playersList:   PlayersList{},
+		currentDealer: -1,
 	}
+
+	g.playersList = append(g.playersList, addr)
+
+	go g.loop()
+
+	return g
+}
+
+func (g *Game) setStatus(s GameStatus) {
+	// Only update the status when the status is different.
+	if g.currentStatus != s {
+		atomic.StoreInt32((*int32)(&g.currentStatus), (int32)(s))
+	}
+}
+
+func (g *Game) getCurrentDealerAddr() (string, bool) {
+	currentDealer := g.playersList[0] // currentDealer == -1
+	if g.currentDealer > -1 {
+		currentDealer = g.playersList[g.currentDealer]
+	}
+	return currentDealer, g.listenAddr == currentDealer
+}
+
+func (g *Game) SetPlayerReady(from string) {
+	logrus.WithFields(logrus.Fields{
+		"we":     g.listenAddr,
+		"player": from,
+	}).Info("setting player status to ready")
+
+	g.playersReady.addRecvStatus(from)
+
+	// If we don't have enough players the round cannot be started.
+	if g.playersReady.len() < 2 {
+		return
+	}
+
+	// In the case we have enough players. hence, the round can be started.
+	// FIXME:(@anthdm)
+	// g.playersReady.clear()
+
+	// we need to check if we are the dealer of the current round.
+	if _, ok := g.getCurrentDealerAddr(); ok {
+		g.InitiateShuffleAndDeal()
+	}
+}
+
+func (g *Game) ShuffleAndEncrypt(from string, deck [][]byte) error {
+	prevPlayerAddr := g.playersList[g.getPrevPositionOnTable()]
+	if from != prevPlayerAddr {
+		return fmt.Errorf("received encrypted deck from the wrong player (%s) should be (%s)", from, prevPlayerAddr)
+	}
+
+	_, isDealer := g.getCurrentDealerAddr()
+	if isDealer && from == prevPlayerAddr {
+		logrus.Info("shuffle round complete")
+		return nil
+	}
+
+	dealToPlayer := g.playersList[g.getNextPositionOnTable()]
+
+	logrus.WithFields(logrus.Fields{
+		"recvFromPlayer":  from,
+		"we":              g.listenAddr,
+		"dealingToPlayer": dealToPlayer,
+	}).Info("received cards and going to shuffle")
+
+	// TODO:(@anthdm) encryption and shuffle
+	// TODO: get this player out of a deterministic (sorted) list.
+
+	g.sendToPlayers(MessageEncCards{Deck: [][]byte{}}, dealToPlayer)
+	g.setStatus(GameStatusDealing)
+
+	return nil
+}
+
+func (g *Game) InitiateShuffleAndDeal() {
+	dealToPlayerAddr := g.playersList[g.getNextPositionOnTable()]
+	g.setStatus(GameStatusDealing)
+	g.sendToPlayers(MessageEncCards{Deck: [][]byte{}}, dealToPlayerAddr)
+
+	logrus.WithFields(logrus.Fields{
+		"we": g.listenAddr,
+		"to": dealToPlayerAddr,
+	}).Info("dealing cards")
 }
 
 func (g *Game) SetReady() {
 	g.playersReady.addRecvStatus(g.listenAddr)
-	g.SendToPlayers(MessageReady{}, g.getOtherPlayers()...)
+	g.sendToPlayers(MessageReady{}, g.getOtherPlayers()...)
 	g.setStatus(GameStatusReady)
-
 }
 
-func (g *Game) SendToPlayers(payload any, addr ...string) {
-	g.broadcastCh <- BroadcastToPeers{
+func (g *Game) sendToPlayers(payload any, addr ...string) {
+	g.broadcastch <- BroadcastToPeers{
 		To:      addr,
 		Payload: payload,
 	}
+
+	logrus.WithFields(logrus.Fields{
+		"payload": payload,
+		"player":  addr,
+		"we":      g.listenAddr,
+	}).Info("sending payload to player")
 }
 
-func (p *PlayersReady) len() int {
-	p.recvStatutesLock.Lock()
-	defer p.recvStatutesLock.Unlock()
-
-	return len(p.recvStatutes)
-}
-
-func (p *PlayersReady) addRecvStatus(from string) {
-	p.recvStatutesLock.Lock()
-	defer p.recvStatutesLock.Unlock()
-
-	p.recvStatutes[from] = true
-}
-
-func (p *PlayersReady) clear() {
-	p.recvStatutesLock.Lock()
-	defer p.recvStatutesLock.Unlock()
-
-	p.recvStatutes = make(map[string]bool)
-}
-
-func (g *Game) AddNewPlayer(from string) {
+func (g *Game) AddPlayer(from string) {
+	// If the player is being added to the game. We are going to assume
+	// that he is ready to play.
 	g.playersList = append(g.playersList, from)
 	sort.Sort(g.playersList)
-	g.playersReady.addRecvStatus(from)
 }
 
-type PlayersList []string
+func (g *Game) loop() {
+	ticker := time.NewTicker(time.Second * 5)
 
-func (list PlayersList) Len() int { return len(list) }
-func (list PlayersList) Swap(i, j int) {
-	list[i], list[j] = list[j], list[i]
-}
-func (list PlayersList) Less(i, j int) bool {
-	portI, _ := strconv.Atoi(list[i][1:])
-	portJ, _ := strconv.Atoi(list[j][1:])
+	for {
+		<-ticker.C
 
-	return portI < portJ
+		currentDealerAddr, _ := g.getCurrentDealerAddr()
+		logrus.WithFields(logrus.Fields{
+			"we":            g.listenAddr,
+			"players":       g.playersList,
+			"status":        g.currentStatus,
+			"currentDealer": currentDealerAddr,
+			// "playersReady": g.playersReady.recvStatutes,
+		}).Info()
+	}
 }
 
 func (g *Game) getOtherPlayers() []string {
 	players := []string{}
 
 	for _, addr := range g.playersList {
-		if addr != g.listenAddr {
-			players = append(players, addr)
+		if addr == g.listenAddr {
+			continue
 		}
+		players = append(players, addr)
 	}
 
 	return players
 }
 
-func (g *Game) loop() {
-	ticker := time.NewTicker(5 * time.Second)
-
-	for {
-		<-ticker.C
-		logrus.WithFields(logrus.Fields{
-			"me":          g.listenAddr,
-			"status":      g.currentStatus,
-			"playerslist": g.playersList,
-		}).Info("Game state")
+// getPositionOnTable return the index of our own position on the table.
+func (g *Game) getPositionOnTable() int {
+	for i := 0; i < len(g.playersList); i++ {
+		if g.playersList[i] == g.listenAddr {
+			return i
+		}
 	}
+
+	panic("player does not exist in the playersList; that should not happen!!!")
 }
 
-// type Player struct {
-// 	Status GameStatus
-// }
+func (g *Game) getPrevPositionOnTable() int {
+	ourPosition := g.getPositionOnTable()
 
-// func (p *Player) String() string {
-// 	return fmt.Sprintf("%s:%s", p.ListenAddr, p.Status)
-// }
+	// if we are the in the first position on the table we need to return the last
+	// index of the PlayersList.
+	if ourPosition == 0 {
+		return len(g.playersList) - 1
+	}
+
+	return ourPosition - 1
+}
+
+// getNextPositionOnTable returns the index of the next player in the PlayersList.
+func (g *Game) getNextPositionOnTable() int {
+	ourPosition := g.getPositionOnTable()
+
+	// check if we are on the last position of the table, if so return first index 0.
+	if ourPosition == len(g.playersList)-1 {
+		return 0
+	}
+
+	return ourPosition + 1
+}
+
+func (g *Game) getNextReadyPlayer(pos int) string {
+	nextPos := g.getNextPositionOnTable()
+	nextPlayerAddr := g.playersList[nextPos]
+
+	// fmt.Printf("%+v\n", )
+
+	if g.playersReady.haveRecv(nextPlayerAddr) {
+		return nextPlayerAddr
+	}
+	return g.getNextReadyPlayer(nextPos + 1)
+}
 
 // type GameState struct {
 // 	listenAddr  string
@@ -195,14 +319,14 @@ func (g *Game) loop() {
 // 		players:     make(map[string]*Player),
 // 	}
 
-// 	g.AddNewPlayer(addr, GameStatusWaitingForCards)
+// 	g.AddPlayer(addr, GameStatusWaitingForCards)
 
 // 	go g.loop()
 
 // 	return g
 // }
 
-// // TODO:(@AbdulREhman-z) Check other read and write occurences of the GameStatus!
+// // TODO:(@anthdm) Check other read and write occurences of the GameStatus!
 // func (g *GameState) SetStatus(s GameStatus) {
 // 	// Only update the status when the status is different.
 // 	if g.gameStatus != s {
@@ -246,74 +370,11 @@ func (g *Game) loop() {
 // 	return players
 // }
 
-// // getPositionOnTable return the index of our own position on the table.
-// func (g *GameState) getPositionOnTable() int {
-// 	for i := 0; i < len(g.playersList); i++ {
-// 		if g.playersList[i].ListenAddr == g.listenAddr {
-// 			return i
-// 		}
-// 	}
-
-// 	panic("player does not exist in the playersList; that should not happen!!!")
-// }
-
-// func (g *GameState) getPrevPositionOnTable() int {
-// 	ourPosition := g.getPositionOnTable()
-
-// 	// if we are the in the first position on the table we need to return the last
-// 	// index of the PlayersList.
-// 	if ourPosition == 0 {
-// 		return len(g.playersList) - 1
-// 	}
-
-// 	return ourPosition - 1
-// }
-
-// // getNextPositionOnTable returns the index of the next player in the PlayersList.
-// func (g *GameState) getNextPositionOnTable() int {
-// 	ourPosition := g.getPositionOnTable()
-
-// 	// check if we are on the last position of the table, if so return first index 0.
-// 	if ourPosition == len(g.playersList)-1 {
-// 		return 0
-// 	}
-
-// 	return ourPosition + 1
-// }
-
-// func (g *GameState) ShuffleAndEncrypt(from string, deck [][]byte) error {
-// 	g.SetPlayerStatus(from, GameStatusShuffleEncryptANdDeal)
-
-// 	prevPlayer := g.playersList[g.getPrevPositionOnTable()]
-// 	if g.isDealer && from == prevPlayer.ListenAddr {
-// 		logrus.Info("shuffle round complete")
-// 		return nil
-// 	}
-
-// 	dealToPlayer := g.playersList[g.getNextPositionOnTable()]
-
-// 	logrus.WithFields(logrus.Fields{
-// 		"recvFromPlayer":  from,
-// 		"we":              g.listenAddr,
-// 		"dealingToPlayer": dealToPlayer,
-// 	}).Info("received cards and going to shuffle")
-
-// 	// TODO:(@AbdulREhman-z) encryption and shuffle
-// 	// TODO: get this player out of a deterministic (sorted) list.
-
-// 	g.SendToPlayer(dealToPlayer.ListenAddr, MessageEncCards{Deck: [][]byte{}})
-// 	g.SetStatus(GameStatusShuffleEncryptANdDeal)
-
-// 	fmt.Printf("%s => setting my own status to %s\n", g.listenAddr, GameStatusShuffleEncryptANdDeal)
-
-// 	return nil
-// }
-
 // // InitiateShuffleAndDeal is only used for the "real" dealer. The actual "button player"
-// func (g *GameState) InitiateShuffleAndDeal() {
-// 	dealToPlayer := g.playersList[g.getNextPositionOnTable()]
+// func (g *GameState) InitiateShuffleAndDeal() { //
+//dealToPlayer := g.playersList[g.getNextPositionOnTable()]
 
-// 	g.SetStatus(GameStatusShuffleEncryptANdDeal)
+// 	g.SetStatus(GameStatusShuffleAndDeal)
 // 	g.SendToPlayer(dealToPlayer.ListenAddr, MessageEncCards{Deck: [][]byte{}})
 // }
 
@@ -354,7 +415,7 @@ func (g *Game) loop() {
 // 	g.CheckNeedDealCards()
 // }
 
-// func (g *GameState) AddNewPlayer(addr string, status GameStatus) {
+// func (g *GameState) AddPlayer(addr string, status GameStatus) {
 // 	g.playersLock.Lock()
 // 	defer g.playersLock.Unlock()
 
@@ -385,4 +446,39 @@ func (g *Game) loop() {
 // 			"status":  g.gameStatus,
 // 		}).Info()
 // 	}
+// }
+
+type PlayersList []string
+
+func (list PlayersList) Len() int { return len(list) }
+func (list PlayersList) Swap(i, j int) {
+	list[i], list[j] = list[j], list[i]
+}
+func (list PlayersList) Less(i, j int) bool {
+	portI, _ := strconv.Atoi(list[i][1:])
+	portJ, _ := strconv.Atoi(list[j][1:])
+
+	return portI < portJ
+}
+
+// type PlayersList []*Player
+
+// func (list PlayersList) Len() int { return len(list) }
+// func (list PlayersList) Swap(i, j int) {
+// 	list[i], list[j] = list[j], list[i]
+// }
+// func (list PlayersList) Less(i, j int) bool {
+// 	portI, _ := strconv.Atoi(list[i].ListenAddr[1:])
+// 	portJ, _ := strconv.Atoi(list[j].ListenAddr[1:])
+
+// 	return portI < portJ
+// }
+
+// type Player struct {
+// 	Status     GameStatus
+// 	ListenAddr string // [":3000", ":5000", ":4000]"
+// }
+
+// func (p *Player) String() string {
+// 	return fmt.Sprintf("%s:%s", p.ListenAddr, p.Status)
 // }
