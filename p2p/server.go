@@ -254,11 +254,11 @@ func (s *Server) handleNewPeer(peer *Peer) error {
 		"gameStatus":     hs.GameStatus,
 		"PeerListenAddr": peer.listenAddr,
 		"we":             s.ListenAddr,
-		"Api	listenAddr":  s.ApiListenAddr,
+		"ApilistenAddr":  s.ApiListenAddr,
 	}).Info("handshake successfull: new player connected")
 
 	s.AddPeer(peer)
-	s.gameState.AddNewPlayer(peer.listenAddr)
+	s.gameState.AddPlayer(peer.listenAddr)
 
 	return nil
 }
@@ -314,19 +314,26 @@ func (s *Server) handleMessage(msg *Message) error {
 	case MessagePeerList:
 		return s.handlePeerList(v)
 	case MessageEncCards:
-		// return s.handleEncDeck(msg.From, v)
+		return s.handleEncDeck(msg.From, v)
+	case MessageReady:
+		return s.handleMsgReady(msg.From)
 	}
 	return nil
 }
 
-// func (s *Server) handleEncDeck(from string, msg MessageEncCards) error {
-// 	logrus.WithFields(logrus.Fields{
-// 		"we":   s.ListenAddr,
-// 		"from": from,
-// 	}).Info("recv env deck")
+func (s *Server) handleMsgReady(from string) error {
+	s.gameState.SetPlayerReady(from)
+	return nil
+}
 
-// 	// return s.gameState.ShuffleAndEncrypt(from, msg.Deck)
-// }
+func (s *Server) handleEncDeck(from string, msg MessageEncCards) error {
+	logrus.WithFields(logrus.Fields{
+		"we":   s.ListenAddr,
+		"from": from,
+	}).Info("recv enc deck")
+
+	return s.gameState.ShuffleAndEncrypt(from, msg.Deck)
+}
 
 // TODO FIXME: (@AbdulRehman-z) maybe goroutine??
 func (s *Server) handlePeerList(l MessagePeerList) error {
@@ -348,4 +355,5 @@ func (s *Server) handlePeerList(l MessagePeerList) error {
 func init() {
 	gob.Register(MessagePeerList{})
 	gob.Register(MessageEncCards{})
+	gob.Register(MessageReady{})
 }
