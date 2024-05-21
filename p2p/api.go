@@ -36,10 +36,16 @@ func (s *ApiServer) Run() {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /ready", makeHttpHandleFunc(s.handlePlayersReady))
+	mux.HandleFunc("GET /fold", makeHttpHandleFunc(s.handlePlayersFold))
 	http.ListenAndServe(s.listenAddr, mux)
 }
 
 func (s *ApiServer) handlePlayersReady(w http.ResponseWriter, r *http.Request) error {
 	s.game.SetReady()
+	return writeJson(w, http.StatusOK, map[string]any{"Game server": s.game.currentStatus})
+}
+
+func (s *ApiServer) handlePlayersFold(w http.ResponseWriter, r *http.Request) error {
+	s.game.Fold()
 	return writeJson(w, http.StatusOK, map[string]any{"Game server": s.game.currentStatus})
 }
