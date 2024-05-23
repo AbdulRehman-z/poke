@@ -321,16 +321,18 @@ func (s *Server) handleMessage(msg *Message) error {
 		return s.handleMsgPreFlop()
 	case MessagePlayerAction:
 		return s.handleMsgPlayerActionFolded(msg.From, v)
+
 	}
 	return nil
 }
 
-func (s *Server) handleMsgPlayerActionFolded(from string, msg any) error {
+func (s *Server) handleMsgPlayerActionFolded(from string, msg MessagePlayerAction) error {
 	logrus.WithFields(logrus.Fields{
 		"we":   s.ListenAddr,
 		"from": from,
 		"msg":  msg,
 	}).Info("received player action")
+	s.gameState.handlePlayerAction(from, msg)
 	return nil
 }
 
