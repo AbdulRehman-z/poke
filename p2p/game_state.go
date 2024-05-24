@@ -11,49 +11,31 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type GameStatus int32
-
-func (g GameStatus) String() string {
-	switch g {
-	case GameStatusConnected:
-		return "CONNECTED"
-	case GameStatusReady:
-		return "PLAYER READY"
-	case GameStatusDealing:
-		return "DEALING"
-	case GameStatusFolded:
-		return "FOLDED"
-	case GameStatusPreFlop:
-		return "PRE FLP"
-	case GameStatusFlop:
-		return "FLOP"
-	case GameStatusTurn:
-		return "TURN"
-	case GameStatusRiver:
-		return "RIVER"
-	default:
-		return "unknown"
-	}
+type AtomicInt struct {
+	Value int32
 }
 
-const (
-	GameStatusConnected GameStatus = iota
-	GameStatusReady
-	GameStatusDealing
-	GameStatusFolded
-	GameStatusPreFlop
-	GameStatusFlop
-	GameStatusTurn
-	GameStatusRiver
-)
+func NewAtomicInt(val int32) *AtomicInt {
+	return &AtomicInt{
+		Value: val,
+	}
+}
+func (a *AtomicInt) String() string {
+	return fmt.Sprintf("%d", a.Value)
+}
 
-type PlayerAction byte
+func (a *AtomicInt) Get() int32 {
+	return atomic.LoadInt32(&a.Value)
+}
 
-const (
-	PlayerActionFold PlayerAction = iota + 1 // 1
-	PLayerActionCheck
-	PlayerActionBet
-)
+func (a *AtomicInt) Set(value int32) {
+	atomic.StoreInt32(&a.Value, value)
+}
+
+func (a *AtomicInt) Inc() {
+	currentValue := a.Get()
+	a.Set(currentValue + 1)
+}
 
 type PlayerActionsRecv struct {
 	mu          sync.RWMutex
@@ -110,11 +92,12 @@ type Game struct {
 	broadcastch chan BroadcastToPeers
 
 	// currentStatus should be atomically accessable.
-	currentStatus GameStatus
+	currentStatus *AtomicInt
 	// currentDealer should be atomically accessable.
 	// NOTE: this will be -1 when the game is in a bootstrapped state.
-	currentDealer     int32
-	currentPlayerTurn int32
+	currentDealer       *AtomicInt
+	currentPlayerAction *AtomicInt
+	currentPlayerTurn   *AtomicInt
 
 	playersReady       *PlayersReady
 	playersActionsRecv *PlayerActionsRecv
@@ -124,13 +107,15 @@ type Game struct {
 
 func NewGame(addr string, bc chan BroadcastToPeers) *Game {
 	g := &Game{
-		listenAddr:         addr,
-		broadcastch:        bc,
-		currentStatus:      GameStatusConnected,
-		playersReady:       NewPlayersReady(),
-		playersList:        PlayersList{},
-		currentDealer:      0,
-		playersActionsRecv: NewPlayerActionsRecv(),
+		listenAddr:          addr,
+		currentStatus:       NewAtomicInt(0),
+		playersReady:        NewPlayersReady(),
+		broadcastch:         bc,
+		playersList:         PlayersList{},
+		currentDealer:       NewAtomicInt(0),
+		currentPlayerTurn:   NewAtomicInt(0),
+		currentPlayerAction: NewAtomicInt(0),
+		playersActionsRecv:  NewPlayerActionsRecv(),
 	}
 
 	g.playersList = append(g.playersList, addr)
@@ -140,33 +125,23 @@ func NewGame(addr string, bc chan BroadcastToPeers) *Game {
 	return g
 }
 
-func (g *Game) Fold() error {
-	g.setStatus(GameStatusFolded)
-	action := MessagePlayerAction{
-		Action:            PlayerActionFold,
-		CurrentGameStatus: g.currentStatus,
-	}
-	g.sendToPlayers(action, g.getOtherPlayers()...)
-	return nil
-}
-
 func (g *Game) SetSatutus(s GameStatus) {
 	g.setStatus(s)
 }
 
 func (g *Game) setStatus(s GameStatus) {
 	if s == GameStatusFlop {
-		g.setCurrentPlayerTurn(g.currentDealer + 1)
+		g.currentPlayerTurn.Inc()
 	}
 
 	// Only update the status when the status is different.
-	if g.currentStatus != s {
-		atomic.StoreInt32((*int32)(&g.currentStatus), (int32)(s))
+	if GameStatus(g.currentStatus.Get()) != s {
+		g.currentStatus.Set(int32(s))
 	}
 }
 
 func (g *Game) getCurrentDealerAddr() (string, bool) {
-	currentDealerAddr := g.playersList[g.currentDealer]
+	currentDealerAddr := g.playersList[g.currentDealer.Get()]
 	return currentDealerAddr, g.listenAddr == currentDealerAddr
 }
 
@@ -193,12 +168,8 @@ func (g *Game) SetPlayerReady(from string) {
 	}
 }
 
-func (g *Game) setCurrentPlayerTurn(index int32) {
-	atomic.StoreInt32(&g.currentPlayerTurn, index)
-}
-
 func (g *Game) canTakeAction(from string) bool {
-	currentPlayerAddr := g.playersList[g.currentPlayerTurn]
+	currentPlayerAddr := g.playersList[g.currentPlayerTurn.Get()]
 	return currentPlayerAddr == from
 }
 
@@ -211,7 +182,80 @@ func (g *Game) handlePlayerAction(from string, msg MessagePlayerAction) error {
 		"we":   g.listenAddr,
 		"from": from,
 	}).Info("recv player action")
+
+	g.currentPlayerTurn.Inc()
+
 	g.playersActionsRecv.addAction(from, msg)
+	return nil
+}
+
+func (g *Game) TakeAction(action PlayerAction, value int) (err error) {
+	if !g.canTakeAction(g.listenAddr) {
+		return fmt.Errorf("player %s taking his action before his turn", g.listenAddr)
+	}
+
+	g.currentPlayerAction.Set(int32(action))
+
+	// switch action {
+	// case PLayerActionCheck:
+	// 	err = g.check()
+	// case PlayerActionFold:
+	// 	err = g.fold()
+	// case PlayerActionBet:
+	// 	err = g.bet(value)
+	// default:
+	// 	err = fmt.Errorf("performing invalid action %s", action)
+	// }
+
+	// if err != nil {
+	// 	return err
+	// }
+	a := MessagePlayerAction{
+		CurrentGameStatus: GameStatus(g.currentStatus.Get()),
+		Action:            action,
+		Value:             value,
+	}
+
+	fmt.Println(a.Action)
+	g.sendToPlayers(a, g.getOtherPlayers()...)
+
+	g.currentPlayerTurn.Inc()
+
+	return
+}
+
+func (g *Game) bet(value int) error {
+	action := MessagePlayerAction{
+		Action: PlayerActionBet,
+		Value:  value,
+	}
+
+	g.sendToPlayers(action, g.getOtherPlayers()...)
+	return nil
+}
+
+func (g *Game) check() error {
+	g.SetSatutus(GameStatusChecked)
+
+	action := MessagePlayerAction{
+		CurrentGameStatus: GameStatusChecked,
+		Action:            PLayerActionCheck,
+	}
+
+	g.sendToPlayers(action, g.getOtherPlayers()...)
+
+	return nil
+}
+
+func (g *Game) fold() error {
+	g.setStatus(GameStatusFolded)
+
+	action := MessagePlayerAction{
+		Action:            PlayerActionFold,
+		CurrentGameStatus: GameStatus(g.currentStatus.Get()),
+	}
+
+	g.sendToPlayers(action, g.getOtherPlayers()...)
 	return nil
 }
 
@@ -227,21 +271,22 @@ func (g *Game) ShuffleAndEncrypt(from string, deck [][]byte) error {
 		g.sendToPlayers(MessagePreFlop{}, g.getOtherPlayers()...)
 		logrus.Info("shuffle round complete")
 		return nil
-	}
 
-	dealToPlayer := g.playersList[g.getNextPositionOnTable()]
+	}
+	dealToNextPlayer := g.playersList[g.getNextPositionOnTable()]
 
 	logrus.WithFields(logrus.Fields{
 		"recvFromPlayer":  from,
 		"we":              g.listenAddr,
-		"dealingToPlayer": dealToPlayer,
+		"dealingToPlayer": dealToNextPlayer,
 	}).Info("received cards and going to shuffle")
 
 	// TODO:(@AbdulRehman-z) encryption and shuffle
 	// TODO: get this player out of a deterministic (sorted) list.
 
-	g.sendToPlayers(MessageEncCards{Deck: [][]byte{}}, dealToPlayer)
+	g.sendToPlayers(MessageEncCards{Deck: [][]byte{}}, dealToNextPlayer)
 	g.setStatus(GameStatusDealing)
+	g.currentPlayerTurn.Inc()
 
 	return nil
 }
@@ -250,11 +295,13 @@ func (g *Game) InitiateShuffleAndDeal() {
 	dealToPlayerAddr := g.playersList[g.getNextPositionOnTable()]
 	g.setStatus(GameStatusDealing)
 	g.sendToPlayers(MessageEncCards{Deck: [][]byte{}}, dealToPlayerAddr)
+	g.currentPlayerTurn.Inc()
 
 	logrus.WithFields(logrus.Fields{
 		"we": g.listenAddr,
 		"to": dealToPlayerAddr,
 	}).Info("dealing cards")
+
 }
 
 func (g *Game) SetReady() {
@@ -291,11 +338,13 @@ func (g *Game) loop() {
 
 		currentDealerAddr, _ := g.getCurrentDealerAddr()
 		logrus.WithFields(logrus.Fields{
-			"we":            g.listenAddr,
-			"players":       g.playersList,
-			"status":        g.currentStatus,
-			"currentDealer": currentDealerAddr,
-			// "playersReady": g.playersReady.recvStatutes,
+			"we":                  g.listenAddr,
+			"players":             g.playersList,
+			"status":              GameStatus(g.currentStatus.Get()),
+			"currentDealer":       currentDealerAddr,
+			"nextPlayerTurn":      g.currentPlayerTurn,
+			"currentPlayerAction": PlayerAction(g.currentPlayerAction.Get()),
+			"playerActionsRccv":   g.playersActionsRecv.recvActions,
 		}).Info()
 	}
 }
