@@ -142,7 +142,7 @@ func (s *Server) SendHandshake(p *Peer) error {
 	hs := &Handshake{
 		GameVariant: s.GameVariant,
 		Version:     s.Version,
-		GameStatus:  s.gameState.currentStatus,
+		GameStatus:  GameStatus(s.gameState.currentStatus.Get()),
 		ListenAddr:  s.ListenAddr,
 	}
 
@@ -319,6 +319,8 @@ func (s *Server) handleMessage(msg *Message) error {
 		return s.handleMsgReady(msg.From)
 	case MessagePreFlop:
 		return s.handleMsgPreFlop()
+	// case MessageCheck:
+	// 	return s.handleMessageCheck()
 	case MessagePlayerAction:
 		return s.handleMsgPlayerActionFolded(msg.From, v)
 
