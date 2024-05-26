@@ -29,11 +29,33 @@ func main() {
 	playerD := makeServerAndStart(":6000", ":6001")
 
 	go func() {
-		time.Sleep(time.Second * 3)
+		// Ready
+		time.Sleep(time.Second * 1)
 		http.Get("http://localhost:3001/ready")
 
-		time.Sleep(time.Second * 3)
+		time.Sleep(time.Second * 1)
 		http.Get("http://localhost:4001/ready")
+
+		time.Sleep(time.Second * 1)
+		http.Get("http://localhost:5001/ready")
+
+		time.Sleep(time.Second * 1)
+		http.Get("http://localhost:6001/ready")
+
+		time.Sleep(time.Second * 8)
+
+		// Fold
+		http.Get("http://localhost:4001/fold")
+
+		time.Sleep(time.Second * 1)
+		http.Get("http://localhost:5001/fold")
+
+		time.Sleep(time.Second * 1)
+		http.Get("http://localhost:6001/fold")
+
+		time.Sleep(time.Second * 1)
+		http.Get("http://localhost:3001/fold")
+
 	}()
 
 	time.Sleep(time.Millisecond * 200)
