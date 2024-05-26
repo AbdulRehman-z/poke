@@ -11,6 +11,19 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+func (g *Game) getNextGameStatus() GameStatus {
+	switch GameStatus(g.currentStatus.Get()) {
+	case GameStatusPreFlop:
+		return GameStatusFlop
+	case GameStatusFlop:
+		return GameStatusTurn
+	case GameStatusTurn:
+		return GameStatusRiver
+	default:
+		panic("invalid status")
+	}
+}
+
 type AtomicInt struct {
 	Value int32
 }
@@ -177,13 +190,20 @@ func (g *Game) handlePlayerAction(from string, msg MessagePlayerAction) error {
 	if !g.canTakeAction(from) {
 		return fmt.Errorf("player %s  taking his action before his turn", from)
 	}
-
+	if GameStatus(g.currentStatus.Get()) != msg.CurrentGameStatus {
+		return fmt.Errorf("player status mismatched got = %d : expected = %d || we = %s, from = %s", msg.CurrentGameStatus, GameStatus(g.currentStatus.Get()), g.listenAddr, from)
+	}
 	logrus.WithFields(logrus.Fields{
 		"we":   g.listenAddr,
 		"from": from,
 	}).Info("recv player action")
 
-	g.currentPlayerTurn.Inc()
+	//Every player in this case should need to set the current game status to next one!
+	if g.playersList[g.currentDealer.Get()] == from {
+		g.currentStatus.Set(int32(g.getNextGameStatus()))
+	}
+
+	g.incNextPlayer()
 
 	g.playersActionsRecv.addAction(from, msg)
 	return nil
@@ -196,31 +216,20 @@ func (g *Game) TakeAction(action PlayerAction, value int) (err error) {
 
 	g.currentPlayerAction.Set(int32(action))
 
-	// switch action {
-	// case PLayerActionCheck:
-	// 	err = g.check()
-	// case PlayerActionFold:
-	// 	err = g.fold()
-	// case PlayerActionBet:
-	// 	err = g.bet(value)
-	// default:
-	// 	err = fmt.Errorf("performing invalid action %s", action)
-	// }
+	// if we are the dealer that just took an action, than we can just go to next round.
+	if g.listenAddr == g.playersList[g.currentDealer.Get()] {
+		g.currentStatus.Set(int32(g.getNextGameStatus()))
+	}
 
-	// if err != nil {
-	// 	return err
-	// }
 	a := MessagePlayerAction{
 		CurrentGameStatus: GameStatus(g.currentStatus.Get()),
 		Action:            action,
 		Value:             value,
 	}
 
-	fmt.Println(a.Action)
 	g.sendToPlayers(a, g.getOtherPlayers()...)
 
-	g.currentPlayerTurn.Inc()
-
+	g.incNextPlayer()
 	return
 }
 
@@ -257,6 +266,15 @@ func (g *Game) fold() error {
 
 	g.sendToPlayers(action, g.getOtherPlayers()...)
 	return nil
+}
+
+func (g *Game) incNextPlayer() {
+	if len(g.playersList)-1 == int(g.currentPlayerTurn.Get()) {
+		g.currentPlayerTurn.Set(0)
+		return
+	}
+
+	g.currentPlayerTurn.Inc()
 }
 
 func (g *Game) ShuffleAndEncrypt(from string, deck [][]byte) error {
