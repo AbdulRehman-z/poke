@@ -44,13 +44,16 @@ func (g GameStatus) String() string {
 type PlayerAction byte
 
 const (
-	PlayerActionFold PlayerAction = iota + 1 // 1
-	PLayerActionCheck
-	PlayerActionBet
+	PlayerActionIdle  PlayerAction = iota // 0
+	PlayerActionFold                      // 1
+	PLayerActionCheck                     // 2
+	PlayerActionBet                       // 3
 )
 
 func (a PlayerAction) String() string {
 	switch a {
+	case PlayerActionIdle:
+		return "IDLE"
 	case PLayerActionCheck:
 		return "CHECKED"
 	case PlayerActionFold:
