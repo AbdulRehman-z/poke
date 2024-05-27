@@ -112,8 +112,8 @@ type Game struct {
 	currentPlayerAction *AtomicInt
 	currentPlayerTurn   *AtomicInt
 
-	playersReady       *PlayersReady
-	playersActionsRecv *PlayerActionsRecv
+	playersReady      *PlayersReady
+	recvPlayerActions *PlayerActionsRecv
 
 	playersList PlayersList
 }
@@ -128,7 +128,7 @@ func NewGame(addr string, bc chan BroadcastToPeers) *Game {
 		currentDealer:       NewAtomicInt(0),
 		currentPlayerTurn:   NewAtomicInt(0),
 		currentPlayerAction: NewAtomicInt(0),
-		playersActionsRecv:  NewPlayerActionsRecv(),
+		recvPlayerActions:   NewPlayerActionsRecv(),
 	}
 
 	g.playersList = append(g.playersList, addr)
@@ -186,11 +186,15 @@ func (g *Game) canTakeAction(from string) bool {
 	return currentPlayerAddr == from
 }
 
+func (g *Game) isMessageFromDealer(from string) bool {
+	return g.playersList[g.currentDealer.Get()] == from
+}
+
 func (g *Game) handlePlayerAction(from string, msg MessagePlayerAction) error {
 	if !g.canTakeAction(from) {
 		return fmt.Errorf("player %s  taking his action before his turn", from)
 	}
-	if GameStatus(g.currentStatus.Get()) != msg.CurrentGameStatus {
+	if GameStatus(g.currentStatus.Get()) != msg.CurrentGameStatus && !g.isMessageFromDealer(from) {
 		return fmt.Errorf("player status mismatched got = %d : expected = %d || we = %s, from = %s", msg.CurrentGameStatus, GameStatus(g.currentStatus.Get()), g.listenAddr, from)
 	}
 	logrus.WithFields(logrus.Fields{
@@ -200,13 +204,28 @@ func (g *Game) handlePlayerAction(from string, msg MessagePlayerAction) error {
 
 	//Every player in this case should need to set the current game status to next one!
 	if g.playersList[g.currentDealer.Get()] == from {
-		g.currentStatus.Set(int32(g.getNextGameStatus()))
+		g.advanceToNextRound()
+		return nil
 	}
 
 	g.incNextPlayer()
 
-	g.playersActionsRecv.addAction(from, msg)
+	g.recvPlayerActions.addAction(from, msg)
 	return nil
+}
+
+func (g *Game) advanceToNextRound() {
+	// clear the player actions.
+	for k := range g.recvPlayerActions.recvActions {
+		delete(g.recvPlayerActions.recvActions, k)
+	}
+
+	// set the current status to the next round.
+	g.currentStatus.Set(int32(g.getNextGameStatus()))
+
+	// set the current player action to idle.
+	g.currentPlayerAction.Set(int32(PlayerActionIdle))
+
 }
 
 func (g *Game) TakeAction(action PlayerAction, value int) (err error) {
@@ -218,7 +237,8 @@ func (g *Game) TakeAction(action PlayerAction, value int) (err error) {
 
 	// if we are the dealer that just took an action, than we can just go to next round.
 	if g.listenAddr == g.playersList[g.currentDealer.Get()] {
-		g.currentStatus.Set(int32(g.getNextGameStatus()))
+		g.advanceToNextRound()
+		return
 	}
 
 	a := MessagePlayerAction{
@@ -362,7 +382,7 @@ func (g *Game) loop() {
 			"currentDealer":       currentDealerAddr,
 			"nextPlayerTurn":      g.currentPlayerTurn,
 			"currentPlayerAction": PlayerAction(g.currentPlayerAction.Get()),
-			"playerActionsRccv":   g.playersActionsRecv.recvActions,
+			"playerActionsRccv":   g.recvPlayerActions.recvActions,
 		}).Info()
 	}
 }
