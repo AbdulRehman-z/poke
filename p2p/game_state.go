@@ -113,9 +113,10 @@ type Game struct {
 	currentPlayerTurn   *AtomicInt
 
 	playersReady      *PlayersReady
+	playersReadyList  *PlayersList
 	recvPlayerActions *PlayerActionsRecv
 
-	playersList PlayersList
+	playersList *PlayersList
 }
 
 func NewGame(addr string, bc chan BroadcastToPeers) *Game {
@@ -123,15 +124,16 @@ func NewGame(addr string, bc chan BroadcastToPeers) *Game {
 		listenAddr:          addr,
 		currentStatus:       NewAtomicInt(0),
 		playersReady:        NewPlayersReady(),
+		playersReadyList:    NewPlayersList(),
 		broadcastch:         bc,
-		playersList:         PlayersList{},
+		playersList:         NewPlayersList(),
 		currentDealer:       NewAtomicInt(0),
 		currentPlayerTurn:   NewAtomicInt(0),
 		currentPlayerAction: NewAtomicInt(0),
 		recvPlayerActions:   NewPlayerActionsRecv(),
 	}
 
-	g.playersList = append(g.playersList, addr)
+	g.playersList.add(addr)
 
 	go g.loop()
 
@@ -154,11 +156,12 @@ func (g *Game) setStatus(s GameStatus) {
 }
 
 func (g *Game) getCurrentDealerAddr() (string, bool) {
-	currentDealerAddr := g.playersList[g.currentDealer.Get()]
+	currentDealerAddr := g.playersList.get(g.currentDealer.Get())
 	return currentDealerAddr, g.listenAddr == currentDealerAddr
 }
 
 func (g *Game) SetPlayerReady(from string) {
+	g.playersReadyList.add(from)
 	logrus.WithFields(logrus.Fields{
 		"we":     g.listenAddr,
 		"player": from,
@@ -182,12 +185,12 @@ func (g *Game) SetPlayerReady(from string) {
 }
 
 func (g *Game) canTakeAction(from string) bool {
-	currentPlayerAddr := g.playersList[g.currentPlayerTurn.Get()]
+	currentPlayerAddr := g.playersList.get(g.currentPlayerTurn.Get())
 	return currentPlayerAddr == from
 }
 
 func (g *Game) isMessageFromDealer(from string) bool {
-	return g.playersList[g.currentDealer.Get()] == from
+	return g.playersList.get(g.currentDealer.Get()) == from
 }
 
 func (g *Game) handlePlayerAction(from string, msg MessagePlayerAction) error {
@@ -195,7 +198,8 @@ func (g *Game) handlePlayerAction(from string, msg MessagePlayerAction) error {
 		return fmt.Errorf("player %s  taking his action before his turn", from)
 	}
 	if GameStatus(g.currentStatus.Get()) != msg.CurrentGameStatus && !g.isMessageFromDealer(from) {
-		return fmt.Errorf("player status mismatched got = %d : expected = %d || we = %s, from = %s", msg.CurrentGameStatus, GameStatus(g.currentStatus.Get()), g.listenAddr, from)
+		return fmt.Errorf("player status mismatched got = %d : expected = %d || we = %s, from = %s",
+			msg.CurrentGameStatus, GameStatus(g.currentStatus.Get()), g.listenAddr, from)
 	}
 	logrus.WithFields(logrus.Fields{
 		"we":   g.listenAddr,
@@ -203,7 +207,7 @@ func (g *Game) handlePlayerAction(from string, msg MessagePlayerAction) error {
 	}).Info("recv player action")
 
 	//Every player in this case should need to set the current game status to next one!
-	if g.playersList[g.currentDealer.Get()] == from {
+	if g.playersList.get(g.currentDealer.Get()) == from {
 		g.advanceToNextRound()
 		return nil
 	}
@@ -236,7 +240,7 @@ func (g *Game) TakeAction(action PlayerAction, value int) (err error) {
 	g.currentPlayerAction.Set(int32(action))
 
 	// if we are the dealer that just took an action, than we can just go to next round.
-	if g.listenAddr == g.playersList[g.currentDealer.Get()] {
+	if g.listenAddr == g.playersList.get(g.currentDealer.Get()) {
 		g.advanceToNextRound()
 		return
 	}
@@ -289,7 +293,7 @@ func (g *Game) fold() error {
 }
 
 func (g *Game) incNextPlayer() {
-	if len(g.playersList)-1 == int(g.currentPlayerTurn.Get()) {
+	if g.playersReady.len()-1 == int(g.currentPlayerTurn.Get()) {
 		g.currentPlayerTurn.Set(0)
 		return
 	}
@@ -298,7 +302,7 @@ func (g *Game) incNextPlayer() {
 }
 
 func (g *Game) ShuffleAndEncrypt(from string, deck [][]byte) error {
-	prevPlayerAddr := g.playersList[g.getPrevPositionOnTable()]
+	prevPlayerAddr := g.playersList.get(g.getPrevPositionOnTable())
 	if from != prevPlayerAddr {
 		return fmt.Errorf("received encrypted deck from the wrong player (%s) should be (%s)", from, prevPlayerAddr)
 	}
@@ -311,7 +315,7 @@ func (g *Game) ShuffleAndEncrypt(from string, deck [][]byte) error {
 		return nil
 
 	}
-	dealToNextPlayer := g.playersList[g.getNextPositionOnTable()]
+	dealToNextPlayer := g.playersList.get(g.getNextPositionOnTable())
 
 	logrus.WithFields(logrus.Fields{
 		"recvFromPlayer":  from,
@@ -330,7 +334,7 @@ func (g *Game) ShuffleAndEncrypt(from string, deck [][]byte) error {
 }
 
 func (g *Game) InitiateShuffleAndDeal() {
-	dealToPlayerAddr := g.playersList[g.getNextPositionOnTable()]
+	dealToPlayerAddr := g.playersList.get(g.getNextPositionOnTable())
 	g.setStatus(GameStatusDealing)
 	g.sendToPlayers(MessageEncCards{Deck: [][]byte{}}, dealToPlayerAddr)
 	g.currentPlayerTurn.Inc()
@@ -343,6 +347,7 @@ func (g *Game) InitiateShuffleAndDeal() {
 }
 
 func (g *Game) SetReady() {
+	g.playersReadyList.add(g.listenAddr)
 	g.playersReady.addRecvStatus(g.listenAddr)
 	g.sendToPlayers(MessageReady{}, g.getOtherPlayers()...)
 	g.setStatus(GameStatusReady)
@@ -364,8 +369,9 @@ func (g *Game) sendToPlayers(payload any, addr ...string) {
 func (g *Game) AddPlayer(from string) {
 	// If the player is being added to the game. We are going to assume
 	// that he is ready to play.
-	g.playersList = append(g.playersList, from)
-	sort.Sort(g.playersList)
+	// g.playersList = append(g.playersList, from)
+	g.playersList.add(from)
+	// sort.Sort(g.playersList.List())
 }
 
 func (g *Game) loop() {
@@ -377,7 +383,7 @@ func (g *Game) loop() {
 		currentDealerAddr, _ := g.getCurrentDealerAddr()
 		logrus.WithFields(logrus.Fields{
 			"we":                  g.listenAddr,
-			"players":             g.playersList,
+			"players":             g.playersList.List(),
 			"status":              GameStatus(g.currentStatus.Get()),
 			"currentDealer":       currentDealerAddr,
 			"nextPlayerTurn":      g.currentPlayerTurn,
@@ -390,7 +396,7 @@ func (g *Game) loop() {
 func (g *Game) getOtherPlayers() []string {
 	players := []string{}
 
-	for _, addr := range g.playersList {
+	for _, addr := range g.playersList.List() {
 		if addr == g.listenAddr {
 			continue
 		}
@@ -402,8 +408,8 @@ func (g *Game) getOtherPlayers() []string {
 
 // getPositionOnTable return the index of our own position on the table.
 func (g *Game) getPositionOnTable() int {
-	for i := 0; i < len(g.playersList); i++ {
-		if g.playersList[i] == g.listenAddr {
+	for i := 0; i < g.playersReady.len(); i++ {
+		if g.playersList.get(i) == g.listenAddr {
 			return i
 		}
 	}
@@ -417,7 +423,7 @@ func (g *Game) getPrevPositionOnTable() int {
 	// if we are the in the first position on the table we need to return the last
 	// index of the PlayersList.
 	if ourPosition == 0 {
-		return len(g.playersList) - 1
+		return g.playersReady.len() - 1
 	}
 
 	return ourPosition - 1
@@ -428,22 +434,99 @@ func (g *Game) getNextPositionOnTable() int {
 	ourPosition := g.getPositionOnTable()
 
 	// check if we are on the last position of the table, if so return first index 0.
-	if ourPosition == len(g.playersList)-1 {
+	if ourPosition == g.playersReady.len()-1 {
 		return 0
 	}
 
 	return ourPosition + 1
 }
 
-type PlayersList []string
-
-func (list PlayersList) Len() int { return len(list) }
-func (list PlayersList) Swap(i, j int) {
-	list[i], list[j] = list[j], list[i]
+type PlayersList struct {
+	mu   sync.RWMutex
+	list []string
 }
-func (list PlayersList) Less(i, j int) bool {
-	portI, _ := strconv.Atoi(list[i][1:])
-	portJ, _ := strconv.Atoi(list[j][1:])
+
+func NewPlayersList() *PlayersList {
+	return &PlayersList{
+		list: make([]string, 0),
+	}
+}
+
+func (p *PlayersList) add(from string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.list = append(p.list, from)
+	sort.Sort(p)
+}
+
+func (p *PlayersList) get(index any) string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	var i int
+	switch v := index.(type) {
+	case int:
+		i = v
+	case int32:
+		i = int(v)
+	}
+
+	if p.Len()-1 < i {
+		panic("can't get the player addr out of range")
+	}
+
+	return p.list[i]
+}
+
+func (p *PlayersList) List() []string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	return p.list
+}
+
+func (p *PlayersList) len() int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	return len(p.list)
+}
+
+func (p *PlayersList) Len() int { return len(p.list) }
+func (p *PlayersList) Swap(i, j int) {
+	p.list[i], p.list[j] = p.list[j], p.list[i]
+}
+func (p *PlayersList) Less(i, j int) bool {
+	portI, _ := strconv.Atoi(p.list[i][1:])
+	portJ, _ := strconv.Atoi(p.list[j][1:])
 
 	return portI < portJ
+}
+
+type Table struct {
+	lock     sync.RWMutex
+	seats    map[int]string
+	maxSeats int
+}
+
+func (t *Table) AddPlayer(addr string) error {
+	t.lock.Lock()
+	defer t.lock.Unlock()
+
+	if len(t.seats) == t.maxSeats {
+		return fmt.Errorf("table is full")
+	}
+
+	t.seats[t.getNextAvaliableSeat()] = addr
+	return nil
+}
+
+func (t *Table) getNextAvaliableSeat() int {
+	for k := range t.seats {
+		if _, ok := t.seats[k]; !ok {
+			return k
+		}
+	}
+	panic("no free seat avaliable")
 }
