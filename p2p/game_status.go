@@ -23,10 +23,6 @@ func (g GameStatus) String() string {
 		return "PLAYER READY"
 	case GameStatusDealing:
 		return "DEALING"
-	case GameStatusFolded:
-		return "FOLDED"
-	case GameStatusChecked:
-		return "CHECKED"
 	case GameStatusPreFlop:
 		return "PRE FLP"
 	case GameStatusFlop:
@@ -44,7 +40,7 @@ func (g GameStatus) String() string {
 type PlayerAction byte
 
 const (
-	PlayerActionIdle  PlayerAction = iota // 0
+	PlayerActionNone  PlayerAction = iota // 0
 	PlayerActionFold                      // 1
 	PLayerActionCheck                     // 2
 	PlayerActionBet                       // 3
@@ -52,12 +48,8 @@ const (
 
 func (a PlayerAction) String() string {
 	switch a {
-	case PlayerActionIdle:
-		return "IDLE"
-	case PLayerActionCheck:
-		return "CHECKED"
-	case PlayerActionFold:
-		return "FOLD"
+	case PlayerActionNone:
+		return "None"
 	case PlayerActionBet:
 		return "BET"
 	default:
