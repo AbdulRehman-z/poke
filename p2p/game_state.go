@@ -228,7 +228,7 @@ func (g *Game) advanceToNextRound() {
 	g.currentStatus.Set(int32(g.getNextGameStatus()))
 
 	// set the current player action to idle.
-	g.currentPlayerAction.Set(int32(PlayerActionIdle))
+	g.currentPlayerAction.Set(int32(PlayerActionNone))
 
 }
 
@@ -502,31 +502,4 @@ func (p *PlayersList) Less(i, j int) bool {
 	portJ, _ := strconv.Atoi(p.list[j][1:])
 
 	return portI < portJ
-}
-
-type Table struct {
-	lock     sync.RWMutex
-	seats    map[int]string
-	maxSeats int
-}
-
-func (t *Table) AddPlayer(addr string) error {
-	t.lock.Lock()
-	defer t.lock.Unlock()
-
-	if len(t.seats) == t.maxSeats {
-		return fmt.Errorf("table is full")
-	}
-
-	t.seats[t.getNextAvaliableSeat()] = addr
-	return nil
-}
-
-func (t *Table) getNextAvaliableSeat() int {
-	for k := range t.seats {
-		if _, ok := t.seats[k]; !ok {
-			return k
-		}
-	}
-	panic("no free seat avaliable")
 }
