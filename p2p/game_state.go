@@ -117,6 +117,8 @@ type Game struct {
 	recvPlayerActions *PlayerActionsRecv
 
 	playersList *PlayersList
+
+	table *Table
 }
 
 func NewGame(addr string, bc chan BroadcastToPeers) *Game {
@@ -131,6 +133,7 @@ func NewGame(addr string, bc chan BroadcastToPeers) *Game {
 		currentPlayerTurn:   NewAtomicInt(0),
 		currentPlayerAction: NewAtomicInt(0),
 		recvPlayerActions:   NewPlayerActionsRecv(),
+		table:               NewTable(6),
 	}
 
 	g.playersList.add(addr)
@@ -142,6 +145,7 @@ func NewGame(addr string, bc chan BroadcastToPeers) *Game {
 
 func (g *Game) SetSatutus(s GameStatus) {
 	g.setStatus(s)
+	g.table.SetPlayerStatus(g.listenAddr, s)
 }
 
 func (g *Game) setStatus(s GameStatus) {
@@ -158,30 +162,6 @@ func (g *Game) setStatus(s GameStatus) {
 func (g *Game) getCurrentDealerAddr() (string, bool) {
 	currentDealerAddr := g.playersList.get(g.currentDealer.Get())
 	return currentDealerAddr, g.listenAddr == currentDealerAddr
-}
-
-func (g *Game) SetPlayerReady(from string) {
-	g.playersReadyList.add(from)
-	logrus.WithFields(logrus.Fields{
-		"we":     g.listenAddr,
-		"player": from,
-	}).Info("setting player status to ready")
-
-	g.playersReady.addRecvStatus(from)
-
-	// If we don't have enough players the round cannot be started.
-	if g.playersReady.len() < 2 {
-		return
-	}
-
-	// In the case we have enough players. hence, the round can be started.
-	// FIXME:(@AbdulRehman-z)
-	// g.playersReady.clear()
-
-	// we need to check if we are the dealer of the current round.
-	if _, ok := g.getCurrentDealerAddr(); ok {
-		g.InitiateShuffleAndDeal()
-	}
 }
 
 func (g *Game) canTakeAction(from string) bool {
@@ -302,19 +282,23 @@ func (g *Game) incNextPlayer() {
 }
 
 func (g *Game) ShuffleAndEncrypt(from string, deck [][]byte) error {
-	prevPlayerAddr := g.playersList.get(g.getPrevPositionOnTable())
-	if from != prevPlayerAddr {
-		return fmt.Errorf("received encrypted deck from the wrong player (%s) should be (%s)", from, prevPlayerAddr)
+	prevPlayerAddr, err := g.table.GetPlayerBeforeMe(from)
+	if err != nil {
+		panic(err)
+	}
+	if from != prevPlayerAddr.addr {
+		return fmt.Errorf("received encrypted deck from the wrong player (%s) should be (%s)", from, prevPlayerAddr.addr)
 	}
 
 	_, isDealer := g.getCurrentDealerAddr()
-	if isDealer && from == prevPlayerAddr {
+	if isDealer && from == prevPlayerAddr.addr {
 		g.setStatus(GameStatusPreFlop)
+		g.table.SetPlayerStatus(from, GameStatusPreFlop)
 		g.sendToPlayers(MessagePreFlop{}, g.getOtherPlayers()...)
 		logrus.Info("shuffle round complete")
 		return nil
-
 	}
+
 	dealToNextPlayer := g.playersList.get(g.getNextPositionOnTable())
 
 	logrus.WithFields(logrus.Fields{
@@ -346,8 +330,36 @@ func (g *Game) InitiateShuffleAndDeal() {
 
 }
 
+func (g *Game) SetPlayerReady(from string) {
+	tablePosition := g.playersList.getIndex(from)
+	g.table.AddPlayerOnPositon(from, tablePosition)
+	logrus.WithFields(logrus.Fields{
+		"we":     g.listenAddr,
+		"player": from,
+	}).Info("setting player status to ready")
+
+	g.playersReady.addRecvStatus(from)
+
+	return
+	// If we don't have enough players the round cannot be started.
+	if g.playersReady.len() < 2 {
+		return
+	}
+
+	// In the case we have enough players. hence, the round can be started.
+	// FIXME:(@AbdulRehman-z)
+	// g.playersReady.clear()
+
+	// we need to check if we are the dealer of the current round.
+	if _, ok := g.getCurrentDealerAddr(); ok {
+		g.InitiateShuffleAndDeal()
+	}
+}
+
 func (g *Game) SetReady() {
-	g.playersReadyList.add(g.listenAddr)
+	tablePosition := g.playersList.getIndex(g.listenAddr)
+	g.table.AddPlayerOnPositon(g.listenAddr, tablePosition)
+
 	g.playersReady.addRecvStatus(g.listenAddr)
 	g.sendToPlayers(MessageReady{}, g.getOtherPlayers()...)
 	g.setStatus(GameStatusReady)
@@ -369,9 +381,8 @@ func (g *Game) sendToPlayers(payload any, addr ...string) {
 func (g *Game) AddPlayer(from string) {
 	// If the player is being added to the game. We are going to assume
 	// that he is ready to play.
-	// g.playersList = append(g.playersList, from)
 	g.playersList.add(from)
-	// sort.Sort(g.playersList.List())
+	sort.Sort(g.playersList)
 }
 
 func (g *Game) loop() {
@@ -382,13 +393,16 @@ func (g *Game) loop() {
 
 		currentDealerAddr, _ := g.getCurrentDealerAddr()
 		logrus.WithFields(logrus.Fields{
-			"we":                  g.listenAddr,
-			"players":             g.playersList.List(),
-			"status":              GameStatus(g.currentStatus.Get()),
-			"currentDealer":       currentDealerAddr,
-			"nextPlayerTurn":      g.currentPlayerTurn,
-			"currentPlayerAction": PlayerAction(g.currentPlayerAction.Get()),
-			"playerActionsRccv":   g.recvPlayerActions.recvActions,
+			"we":             g.listenAddr,
+			"playersList":    g.playersList.List(),
+			"status":         GameStatus(g.currentStatus.Get()),
+			"currentDealer":  currentDealerAddr,
+			"nextPlayerTurn": g.currentPlayerTurn,
+		}).Info()
+
+		logrus.WithFields(logrus.Fields{
+			"we":    g.listenAddr,
+			"table": g.table,
 		}).Info()
 	}
 }
@@ -484,6 +498,19 @@ func (p *PlayersList) List() []string {
 	defer p.mu.RUnlock()
 
 	return p.list
+}
+
+func (p *PlayersList) getIndex(addr string) int {
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for k := range p.list {
+		if addr == p.list[k] {
+			return k
+		}
+	}
+	return -1
 }
 
 func (p *PlayersList) len() int {
