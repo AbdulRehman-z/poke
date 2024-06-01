@@ -2,6 +2,7 @@ package p2p
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 )
 
@@ -27,11 +28,49 @@ type Table struct {
 	maxSeats int
 }
 
+func (t *Table) String() string {
+	parts := []string{}
+
+	for k := range t.LenPlayers() {
+		p, ok := t.seats[k]
+		if ok {
+			format := fmt.Sprintf("[%d %s %s %s]", p.tablePosition, p.addr,
+				PlayerAction(p.currentAction), GameStatus(p.gameStatus))
+			parts = append(parts, format)
+		}
+	}
+
+	return strings.Join(parts, " ")
+}
+
 func NewTable(seats int) *Table {
 	return &Table{
 		seats:    make(map[int]*Player, seats),
 		maxSeats: seats,
 	}
+}
+
+func (t *Table) SetPlayerStatus(addr string, s GameStatus) {
+	t.lock.Lock()
+	defer t.lock.Unlock()
+
+	for k := range t.seats {
+		if addr == t.seats[k].addr {
+			t.seats[k].gameStatus = s
+		}
+	}
+}
+
+func (t *Table) AddPlayerOnPositon(addr string, position int) error {
+	t.lock.Lock()
+	defer t.lock.Unlock()
+
+	player := NewPLayer(addr)
+	player.tablePosition = position
+	player.gameStatus = GameStatusReady
+	t.seats[position] = player
+
+	return nil
 }
 
 func (t *Table) AddPlayer(addr string) error {
@@ -45,13 +84,25 @@ func (t *Table) AddPlayer(addr string) error {
 	position := t.getNextAvaliableSeat()
 	player := NewPLayer(addr)
 	player.tablePosition = position
+	player.gameStatus = GameStatusReady
 
 	t.seats[position] = player
 
 	return nil
 }
 
-func (t *Table) GetPlayerByAddr(addr string) (*Player, error) {
+func (t *Table) GetPlayer(addr string) (*Player, error) {
+	t.lock.RLock()
+	defer t.lock.RUnlock()
+
+	player, err := t.getPlayerByAddr(addr)
+	if err != nil {
+		return nil, fmt.Errorf("can't get the player [addr: %s]", addr)
+	}
+	return player, nil
+}
+
+func (t *Table) getPlayerByAddr(addr string) (*Player, error) {
 	for k := range t.seats {
 		player, ok := t.seats[k]
 		if player.addr == addr {
@@ -78,8 +129,22 @@ func (t *Table) RemovePlayerByAddr(addr string) error {
 	return fmt.Errorf("player can't be deleted %s", addr)
 }
 
+func (t *Table) Players() []*Player {
+	t.lock.RLock()
+	defer t.lock.RUnlock()
+
+	players := []*Player{}
+	for k := range t.maxSeats {
+		player, ok := t.seats[k]
+		if ok {
+			players = append(players, player)
+		}
+	}
+	return players
+}
+
 func (t *Table) GetPlayerBeforeMe(addr string) (*Player, error) {
-	currentPlayer, err := t.GetPlayerByAddr(addr)
+	currentPlayer, err := t.getPlayerByAddr(addr)
 	if err != nil {
 		return nil, fmt.Errorf("can't get the player %s", addr)
 	}
@@ -88,6 +153,7 @@ func (t *Table) GetPlayerBeforeMe(addr string) (*Player, error) {
 	if i <= 0 {
 		i = t.maxSeats
 	}
+
 	for {
 		nextPlayer, ok := t.seats[i]
 		if ok {
@@ -98,12 +164,11 @@ func (t *Table) GetPlayerBeforeMe(addr string) (*Player, error) {
 			return nextPlayer, nil
 		}
 		i--
-
 	}
 }
 
 func (t *Table) GetPlayerAfterMe(addr string) (*Player, error) {
-	currentPlayer, err := t.GetPlayerByAddr(addr)
+	currentPlayer, err := t.getPlayerByAddr(addr)
 	if err != nil {
 		return nil, fmt.Errorf("can't get the player %s", addr)
 	}
@@ -123,6 +188,13 @@ func (t *Table) GetPlayerAfterMe(addr string) (*Player, error) {
 		}
 		i++
 	}
+}
+
+func (t *Table) LenPlayers() int {
+	t.lock.RLock()
+	defer t.lock.RUnlock()
+
+	return len(t.seats)
 }
 
 func (t *Table) getNextAvaliableSeat() int {
