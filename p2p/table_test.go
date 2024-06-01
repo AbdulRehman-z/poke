@@ -22,7 +22,7 @@ func TestPlayerInTable(t *testing.T) {
 	assert.NotNil(t, err)
 
 	// get player
-	player, err := table.GetPlayerByAddr(addr1)
+	player, err := table.GetPlayer(addr1)
 	assert.NoError(t, err)
 	assert.Equal(t, player.addr, addr1)
 
@@ -31,12 +31,12 @@ func TestPlayerInTable(t *testing.T) {
 	assert.NoError(t, err)
 
 	// get the same player again after removing it
-	player, err = table.GetPlayerByAddr(addr1)
+	player, err = table.GetPlayer(addr1)
 	assert.Nil(t, player)
 	assert.Error(t, err)
 
 	// get player with addr2
-	player, err = table.GetPlayerByAddr(addr2)
+	player, err = table.GetPlayer(addr2)
 	assert.Equal(t, player.addr, addr2)
 	assert.Nil(t, err)
 
