@@ -150,20 +150,21 @@ func (t *Table) GetPlayerBeforeMe(addr string) (*Player, error) {
 	}
 
 	i := currentPlayer.tablePosition - 1
-	if i <= 0 {
-		i = t.maxSeats
-	}
+	fmt.Println("adawdawd", i)
 
 	for {
-		nextPlayer, ok := t.seats[i]
+		prevPlayer, ok := t.seats[i]
 		if ok {
-			if nextPlayer.addr == currentPlayer.addr {
+			if prevPlayer.addr == currentPlayer.addr {
 				return nil, fmt.Errorf("%s is the only player in the table", addr)
 			}
-
-			return nextPlayer, nil
+			return prevPlayer, nil
 		}
 		i--
+
+		if i <= 0 {
+			i = t.maxSeats
+		}
 	}
 }
 
