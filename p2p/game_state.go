@@ -181,10 +181,10 @@ func (g *Game) handlePlayerAction(from string, msg MessagePlayerAction) error {
 		return fmt.Errorf("player status mismatched got = %d : expected = %d || we = %s, from = %s",
 			msg.CurrentGameStatus, GameStatus(g.currentStatus.Get()), g.listenAddr, from)
 	}
-	logrus.WithFields(logrus.Fields{
-		"we":   g.listenAddr,
-		"from": from,
-	}).Info("recv player action")
+	// logrus.WithFields(logrus.Fields{
+	// 	"we":   g.listenAddr,
+	// 	"from": from,
+	// }).Info("recv player action")
 
 	//Every player in this case should need to set the current game status to next one!
 	if g.playersList.get(g.currentDealer.Get()) == from {
@@ -282,12 +282,13 @@ func (g *Game) incNextPlayer() {
 }
 
 func (g *Game) ShuffleAndEncrypt(from string, deck [][]byte) error {
-	prevPlayerAddr, err := g.table.GetPlayerBeforeMe(from)
+	prevPlayerAddr, err := g.table.GetPlayerBeforeMe(g.listenAddr)
 	if err != nil {
 		panic(err)
 	}
+
 	if from != prevPlayerAddr.addr {
-		return fmt.Errorf("received encrypted deck from the wrong player (%s) should be (%s)", from, prevPlayerAddr.addr)
+		return fmt.Errorf("%s received encrypted deck from the wrong player (%s) should be (%s)", g.listenAddr, from, prevPlayerAddr.addr)
 	}
 
 	_, isDealer := g.getCurrentDealerAddr()
@@ -323,36 +324,41 @@ func (g *Game) InitiateShuffleAndDeal() {
 	g.sendToPlayers(MessageEncCards{Deck: [][]byte{}}, dealToPlayerAddr)
 	g.currentPlayerTurn.Inc()
 
-	logrus.WithFields(logrus.Fields{
-		"we": g.listenAddr,
-		"to": dealToPlayerAddr,
-	}).Info("dealing cards")
+	// logrus.WithFields(logrus.Fields{
+	// 	"we": g.listenAddr,
+	// 	"from"
+	// 	"to": dealToPlayerAddr,
+	// }).Info("dealing cards")
 
+}
+
+func (g *Game) maybeDealer() {
+	if GameStatus(g.currentStatus.Get()) == GameStatusReady {
+		g.InitiateShuffleAndDeal()
+	}
 }
 
 func (g *Game) SetPlayerReady(from string) {
 	tablePosition := g.playersList.getIndex(from)
 	g.table.AddPlayerOnPositon(from, tablePosition)
-	logrus.WithFields(logrus.Fields{
-		"we":     g.listenAddr,
-		"player": from,
-	}).Info("setting player status to ready")
+	// logrus.WithFields(logrus.Fields{
+	// 	"we":     g.listenAddr,
+	// 	"player": from,
+	// }).Info("setting player status to ready")
 
 	g.playersReady.addRecvStatus(from)
 
-	return
 	// If we don't have enough players the round cannot be started.
 	if g.playersReady.len() < 2 {
 		return
 	}
 
-	// In the case we have enough players. hence, the round can be started.
-	// FIXME:(@AbdulRehman-z)
-	// g.playersReady.clear()
-
 	// we need to check if we are the dealer of the current round.
-	if _, ok := g.getCurrentDealerAddr(); ok {
-		g.InitiateShuffleAndDeal()
+	if _, areWeDealer := g.getCurrentDealerAddr(); areWeDealer {
+		go func() {
+			time.Sleep(5 * time.Second)
+			g.maybeDealer()
+		}()
 	}
 }
 
@@ -371,11 +377,11 @@ func (g *Game) sendToPlayers(payload any, addr ...string) {
 		Payload: payload,
 	}
 
-	logrus.WithFields(logrus.Fields{
-		"payload": payload,
-		"player":  addr,
-		"we":      g.listenAddr,
-	}).Info("sending payload to player")
+	// logrus.WithFields(logrus.Fields{
+	// 	"payload": payload,
+	// 	"player":  addr,
+	// 	"we":      g.listenAddr,
+	// }).Info("sending payload to player")
 }
 
 func (g *Game) AddPlayer(from string) {

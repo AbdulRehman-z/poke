@@ -42,7 +42,7 @@ func main() {
 		time.Sleep(time.Second * 1)
 		http.Get("http://localhost:6001/ready")
 
-		time.Sleep(time.Second * 5)
+		// time.Sleep(time.Second * 5)
 
 		// Fold
 		// http.Get("http://localhost:4001/fold")
