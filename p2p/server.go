@@ -197,12 +197,11 @@ func (s *Server) loop() {
 	for {
 		select {
 		case msg := <-s.broadcastch:
-			logrus.Info("broadcasting to all peers")
-
-			if err := s.Broadcast(msg); err != nil {
-				logrus.Errorf("broadcast error: %s\n", err)
-			}
-
+			go func() {
+				if err := s.Broadcast(msg); err != nil {
+					logrus.Errorf("broadcast error: %s\n", err)
+				}
+			}()
 		case peer := <-s.delPeer:
 			logrus.WithFields(logrus.Fields{
 				"addr": peer.conn.RemoteAddr(),
@@ -286,11 +285,6 @@ func (s *Server) Broadcast(broadcastMsg BroadcastToPeers) error {
 				if err := peer.Send(buf.Bytes()); err != nil {
 					logrus.Errorf("broadcast to peer error: %s", err)
 				}
-
-				logrus.WithFields(logrus.Fields{
-					"we":   s.ListenAddr,
-					"peer": peer.listenAddr,
-				}).Info("sending msg to peer")
 			}(peer)
 		}
 	}
