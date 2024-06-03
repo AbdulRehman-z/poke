@@ -11,7 +11,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-const maxPlayers = 6
+const defaultMaxPlayers = 6
 
 type GameVariant uint8
 
@@ -34,7 +34,7 @@ const (
 type ServerConfig struct {
 	Version       string
 	ListenAddr    string
-	ApiListenAddr string
+	APIListenAddr string
 	GameVariant   GameVariant
 	MaxPlayers    int
 }
@@ -50,12 +50,13 @@ type Server struct {
 	msgCh       chan *Message
 	broadcastch chan BroadcastToPeers
 
+	// gameState *GameState
 	gameState *Game
 }
 
 func NewServer(cfg ServerConfig) *Server {
 	if cfg.MaxPlayers == 0 {
-		cfg.MaxPlayers = maxPlayers
+		cfg.MaxPlayers = defaultMaxPlayers
 	}
 
 	s := &Server{
@@ -66,6 +67,7 @@ func NewServer(cfg ServerConfig) *Server {
 		msgCh:        make(chan *Message, 100),
 		broadcastch:  make(chan BroadcastToPeers, 100),
 	}
+	// s.gameState = NewGameState(s.ListenAddr, s.broadcastch)
 	s.gameState = NewGame(s.ListenAddr, s.broadcastch)
 
 	// if s.ListenAddr == ":3000" {
@@ -77,12 +79,16 @@ func NewServer(cfg ServerConfig) *Server {
 
 	tr.AddPeer = s.addPeer
 	tr.DelPeer = s.addPeer
+
 	go func(s *Server) {
-		apiServer := NewApiServer(s.ApiListenAddr, s.gameState)
+		apiServer := NewApiServer(cfg.APIListenAddr, s.gameState)
+
 		logrus.WithFields(logrus.Fields{
-			"api server": s.ApiListenAddr,
-		}).Info("api server listening")
+			"listenAddr": cfg.APIListenAddr,
+		}).Info("starting API server")
+
 		apiServer.Run()
+
 	}(s)
 
 	return s
@@ -92,8 +98,9 @@ func (s *Server) Start() {
 	go s.loop()
 
 	logrus.WithFields(logrus.Fields{
-		"port":    s.ListenAddr,
-		"variant": s.GameVariant,
+		"port":       s.ListenAddr,
+		"variant":    s.GameVariant,
+		"maxPlayers": s.MaxPlayers,
 	}).Info("started new game server")
 
 	s.transport.ListenAndAccept()
@@ -199,9 +206,10 @@ func (s *Server) loop() {
 		case msg := <-s.broadcastch:
 			go func() {
 				if err := s.Broadcast(msg); err != nil {
-					logrus.Errorf("broadcast error: %s\n", err)
+					logrus.Errorf("broadcast error: %s", err)
 				}
 			}()
+
 		case peer := <-s.delPeer:
 			logrus.WithFields(logrus.Fields{
 				"addr": peer.conn.RemoteAddr(),
@@ -254,16 +262,16 @@ func (s *Server) handleNewPeer(peer *Peer) error {
 	}
 
 	logrus.WithFields(logrus.Fields{
-		"peer":           peer.conn.RemoteAddr(),
-		"version":        hs.Version,
-		"variant":        hs.GameVariant,
-		"gameStatus":     hs.GameStatus,
-		"PeerListenAddr": peer.listenAddr,
-		"we":             s.ListenAddr,
-		"ApilistenAddr":  s.ApiListenAddr,
+		"peer":       peer.conn.RemoteAddr(),
+		"version":    hs.Version,
+		"variant":    hs.GameVariant,
+		"gameStatus": hs.GameStatus,
+		"listenAddr": peer.listenAddr,
+		"we":         s.ListenAddr,
 	}).Info("handshake successfull: new player connected")
 
 	s.AddPeer(peer)
+
 	s.gameState.AddPlayer(peer.listenAddr)
 
 	return nil
@@ -294,8 +302,9 @@ func (s *Server) Broadcast(broadcastMsg BroadcastToPeers) error {
 
 func (s *Server) handshake(p *Peer) (*Handshake, error) {
 	if len(s.peers) > s.MaxPlayers {
-		return nil, fmt.Errorf("max palyer exceede %d", s.MaxPlayers)
+		return nil, fmt.Errorf("max players exceeded (%d)", s.MaxPlayers)
 	}
+
 	hs := &Handshake{}
 	if err := gob.NewDecoder(p.conn).Decode(hs); err != nil {
 		return nil, err
@@ -315,48 +324,41 @@ func (s *Server) handshake(p *Peer) (*Handshake, error) {
 
 func (s *Server) handleMessage(msg *Message) error {
 	switch v := msg.Payload.(type) {
+	case MessagePreFlop:
+		return s.handleMsgPreFlop(msg.From)
 	case MessagePeerList:
 		return s.handlePeerList(v)
 	case MessageEncCards:
-		return s.handleEncDeck(msg.From, v)
+		return s.handleMsgEncDeck(msg.From, v)
 	case MessageReady:
 		return s.handleMsgReady(msg.From)
-	case MessagePreFlop:
-		return s.handleMsgPreFlop()
-	// case MessageCheck:
-	// 	return s.handleMessageCheck()
 	case MessagePlayerAction:
-		return s.handleMsgPlayerActionFolded(msg.From, v)
-
+		return s.handleGetMsgPlayerAction(msg.From, v)
 	}
 	return nil
 }
 
-func (s *Server) handleMsgPlayerActionFolded(from string, msg MessagePlayerAction) error {
-	logrus.WithFields(logrus.Fields{
-		"we":   s.ListenAddr,
-		"from": from,
-		"msg":  msg,
-	}).Info("received player action")
-	s.gameState.handlePlayerAction(from, msg)
+func (s *Server) handleGetMsgPlayerAction(from string, msg MessagePlayerAction) error {
+	return s.gameState.handlePlayerAction(from, msg)
+}
+
+func (s *Server) handleMsgPreFlop(from string) error {
+	s.gameState.SetStatus(GameStatusPreFlop)
+
 	return nil
 }
 
 func (s *Server) handleMsgReady(from string) error {
 	s.gameState.SetPlayerReady(from)
+
 	return nil
 }
 
-func (s *Server) handleMsgPreFlop() error {
-	s.gameState.SetSatutus(GameStatusPreFlop)
-	return nil
-}
-
-func (s *Server) handleEncDeck(from string, msg MessageEncCards) error {
+func (s *Server) handleMsgEncDeck(from string, msg MessageEncCards) error {
 	logrus.WithFields(logrus.Fields{
 		"we":   s.ListenAddr,
 		"from": from,
-	}).Info("recv enc deck")
+	}) // .Info("recv env deck")
 
 	return s.gameState.ShuffleAndEncrypt(from, msg.Deck)
 }
@@ -370,7 +372,7 @@ func (s *Server) handlePeerList(l MessagePeerList) error {
 
 	for i := 0; i < len(l.Peers); i++ {
 		if err := s.Connect(l.Peers[i]); err != nil {
-			logrus.Errorf("failed to dial peer: %s\n", err)
+			logrus.Errorf("failed to dial peer: %s", err)
 			continue
 		}
 	}
@@ -384,5 +386,4 @@ func init() {
 	gob.Register(MessageReady{})
 	gob.Register(MessagePreFlop{})
 	gob.Register(MessagePlayerAction{})
-
 }

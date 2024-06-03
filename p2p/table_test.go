@@ -66,14 +66,14 @@ func TestGetPlayerBeforeMe(t *testing.T) {
 	assert.Nil(t, table.AddPlayer(addr4))
 
 	// get players before me
-	player, _ := table.GetPlayerBeforeMe(addr1)
+	player, _ := table.GetPlayerBefore(addr1)
 	assert.Equal(t, player.addr, addr4)
-	player, _ = table.GetPlayerBeforeMe(addr4)
+	player, _ = table.GetPlayerBefore(addr4)
 	assert.Equal(t, player.addr, addr3)
 
 	// remove the player and then get player before me
 	assert.Nil(t, table.RemovePlayerByAddr(addr1))
-	player, _ = table.GetPlayerBeforeMe(addr2)
+	player, _ = table.GetPlayerBefore(addr2)
 	assert.Equal(t, player.addr, addr4)
 }
 
@@ -94,19 +94,19 @@ func TestGetPlayerAfterMe(t *testing.T) {
 	assert.Nil(t, table.AddPlayer(addr4))
 
 	// get next player
-	player, _ := table.GetPlayerAfterMe(addr1)
+	player, _ := table.GetPlayerAfter(addr1)
 	assert.Equal(t, player.addr, addr2)
-	player, _ = table.GetPlayerAfterMe(addr2)
+	player, _ = table.GetPlayerAfter(addr2)
 	assert.Equal(t, player.addr, addr3)
-	player, _ = table.GetPlayerAfterMe(addr3)
+	player, _ = table.GetPlayerAfter(addr3)
 	assert.Equal(t, player.addr, addr4)
-	player, _ = table.GetPlayerAfterMe(addr4)
+	player, _ = table.GetPlayerAfter(addr4)
 	assert.Equal(t, player.addr, addr1)
 
 	// remove one player and the get next player from player map
 	err := table.RemovePlayerByAddr(addr2)
 	assert.NoError(t, err)
-	player, err = table.GetPlayerAfterMe(addr1)
+	player, err = table.GetPlayerAfter(addr1)
 	assert.Nil(t, err)
 	assert.Equal(t, player.addr, addr3)
 }

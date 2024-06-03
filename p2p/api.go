@@ -61,7 +61,7 @@ func (s *ApiServer) handlePlayersBet(w http.ResponseWriter, r *http.Request) err
 }
 
 func (s *ApiServer) handlePlayersChecked(w http.ResponseWriter, r *http.Request) error {
-	if err := s.game.TakeAction(PLayerActionCheck, 0); err != nil {
+	if err := s.game.TakeAction(PlayerActionCheck, 0); err != nil {
 		return err
 	}
 	return writeJson(w, http.StatusOK, "CHECKED")

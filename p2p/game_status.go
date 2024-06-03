@@ -1,30 +1,41 @@
 package p2p
 
-// enum for GameStatus
-type GameStatus int32
+type PlayerAction byte
+
+func (pa PlayerAction) String() string {
+	switch pa {
+	case PlayerActionNone:
+		return "NONE"
+	case PlayerActionFold:
+		return "FOLD"
+	case PlayerActionCheck:
+		return "CHECK"
+	case PlayerActionBet:
+		return "BET"
+	default:
+		return "INVALID"
+	}
+}
 
 const (
-	GameStatusConnected GameStatus = iota
-	GameStatusReady
-	GameStatusDealing
-	GameStatusFolded
-	GameStatusChecked
-	GameStatusPreFlop
-	GameStatusFlop
-	GameStatusTurn
-	GameStatusRiver
+	PlayerActionNone PlayerAction = iota
+	PlayerActionFold
+	PlayerActionCheck
+	PlayerActionBet
 )
+
+type GameStatus int32
 
 func (g GameStatus) String() string {
 	switch g {
 	case GameStatusConnected:
 		return "CONNECTED"
-	case GameStatusReady:
+	case GameStatusPlayerReady:
 		return "PLAYER READY"
 	case GameStatusDealing:
 		return "DEALING"
 	case GameStatusPreFlop:
-		return "PRE FLP"
+		return "PRE FLOP"
 	case GameStatusFlop:
 		return "FLOP"
 	case GameStatusTurn:
@@ -36,23 +47,12 @@ func (g GameStatus) String() string {
 	}
 }
 
-// enum for PlayerAction
-type PlayerAction byte
-
 const (
-	PlayerActionNone  PlayerAction = iota // 0
-	PlayerActionFold                      // 1
-	PLayerActionCheck                     // 2
-	PlayerActionBet                       // 3
+	GameStatusConnected GameStatus = iota
+	GameStatusPlayerReady
+	GameStatusDealing
+	GameStatusPreFlop
+	GameStatusFlop
+	GameStatusTurn
+	GameStatusRiver
 )
-
-func (a PlayerAction) String() string {
-	switch a {
-	case PlayerActionNone:
-		return "None"
-	case PlayerActionBet:
-		return "BET"
-	default:
-		return "invalid player action"
-	}
-}

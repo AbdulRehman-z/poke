@@ -10,123 +10,42 @@ type Player struct {
 	addr          string
 	currentAction PlayerAction
 	gameStatus    GameStatus
-	tablePosition int
+	tablePos      int
 }
 
-func NewPLayer(addr string) *Player {
+func NewPlayer(addr string) *Player {
 	return &Player{
 		addr:          addr,
 		currentAction: PlayerActionNone,
 		gameStatus:    GameStatusConnected,
-		tablePosition: -1,
+		tablePos:      -1,
 	}
 }
 
 type Table struct {
-	lock     sync.RWMutex
-	seats    map[int]*Player
+	lock  sync.RWMutex
+	seats map[int]*Player
+
 	maxSeats int
+}
+
+func NewTable(maxSeats int) *Table {
+	return &Table{
+		seats:    make(map[int]*Player),
+		maxSeats: maxSeats,
+	}
 }
 
 func (t *Table) String() string {
 	parts := []string{}
-
-	for k := range t.LenPlayers() {
-		p, ok := t.seats[k]
+	for i := 0; i < t.LenPlayers(); i++ {
+		p, ok := t.seats[i]
 		if ok {
-			format := fmt.Sprintf("[%d %s %s %s]", p.tablePosition, p.addr,
-				PlayerAction(p.currentAction), GameStatus(p.gameStatus))
+			format := fmt.Sprintf("[%d %s %s %s]", p.tablePos, p.addr, p.gameStatus, p.currentAction)
 			parts = append(parts, format)
 		}
 	}
-
 	return strings.Join(parts, " ")
-}
-
-func NewTable(seats int) *Table {
-	return &Table{
-		seats:    make(map[int]*Player, seats),
-		maxSeats: seats,
-	}
-}
-
-func (t *Table) SetPlayerStatus(addr string, s GameStatus) {
-	t.lock.Lock()
-	defer t.lock.Unlock()
-
-	for k := range t.seats {
-		if addr == t.seats[k].addr {
-			t.seats[k].gameStatus = s
-		}
-	}
-}
-
-func (t *Table) AddPlayerOnPositon(addr string, position int) error {
-	t.lock.Lock()
-	defer t.lock.Unlock()
-
-	player := NewPLayer(addr)
-	player.tablePosition = position
-	player.gameStatus = GameStatusReady
-	t.seats[position] = player
-
-	return nil
-}
-
-func (t *Table) AddPlayer(addr string) error {
-	t.lock.Lock()
-	defer t.lock.Unlock()
-
-	if len(t.seats) == t.maxSeats {
-		return fmt.Errorf("table is full")
-	}
-
-	position := t.getNextAvaliableSeat()
-	player := NewPLayer(addr)
-	player.tablePosition = position
-	player.gameStatus = GameStatusReady
-
-	t.seats[position] = player
-
-	return nil
-}
-
-func (t *Table) GetPlayer(addr string) (*Player, error) {
-	t.lock.RLock()
-	defer t.lock.RUnlock()
-
-	player, err := t.getPlayerByAddr(addr)
-	if err != nil {
-		return nil, fmt.Errorf("can't get the player [addr: %s]", addr)
-	}
-	return player, nil
-}
-
-func (t *Table) getPlayerByAddr(addr string) (*Player, error) {
-	for k := range t.seats {
-		player, ok := t.seats[k]
-		if player.addr == addr {
-			if ok {
-				return player, nil
-			}
-		}
-	}
-
-	return nil, fmt.Errorf("player can't be found %s", addr)
-}
-
-func (t *Table) RemovePlayerByAddr(addr string) error {
-	for k := range t.seats {
-		player, ok := t.seats[k]
-		if ok {
-			if player.addr == addr {
-				delete(t.seats, k)
-				return nil
-			}
-		}
-	}
-
-	return fmt.Errorf("player can't be deleted %s", addr)
 }
 
 func (t *Table) Players() []*Player {
@@ -134,61 +53,70 @@ func (t *Table) Players() []*Player {
 	defer t.lock.RUnlock()
 
 	players := []*Player{}
-	for k := range t.maxSeats {
-		player, ok := t.seats[k]
+	for i := 0; i < t.maxSeats; i++ {
+		player, ok := t.seats[i]
 		if ok {
 			players = append(players, player)
 		}
 	}
+
 	return players
 }
 
-func (t *Table) GetPlayerBeforeMe(addr string) (*Player, error) {
-	currentPlayer, err := t.getPlayerByAddr(addr)
+func (t *Table) GetPlayerBefore(addr string) (*Player, error) {
+	t.lock.RLock()
+	defer t.lock.RUnlock()
+
+	currentPlayer, err := t.getPlayer(addr)
 	if err != nil {
-		return nil, fmt.Errorf("can't get the player %s", addr)
+		return nil, err
 	}
 
-	i := currentPlayer.tablePosition - 1
-	fmt.Println("adawdawd", i)
-
+	i := currentPlayer.tablePos - 1
 	for {
 		prevPlayer, ok := t.seats[i]
+		if prevPlayer == currentPlayer {
+			return nil, fmt.Errorf("%s is the only player on the table", addr)
+		}
 		if ok {
-			if prevPlayer.addr == currentPlayer.addr {
-				return nil, fmt.Errorf("%s is the only player in the table", addr)
-			}
 			return prevPlayer, nil
 		}
-		i--
 
+		i--
 		if i <= 0 {
 			i = t.maxSeats
 		}
 	}
 }
 
-func (t *Table) GetPlayerAfterMe(addr string) (*Player, error) {
-	currentPlayer, err := t.getPlayerByAddr(addr)
+func (t *Table) GetPlayerAfter(addr string) (*Player, error) {
+	t.lock.RLock()
+	defer t.lock.RUnlock()
+
+	currentPlayer, err := t.getPlayer(addr)
 	if err != nil {
-		return nil, fmt.Errorf("can't get the player %s", addr)
+		return nil, err
 	}
 
-	i := currentPlayer.tablePosition + 1
-	if t.maxSeats == i {
-		i = 0
-	}
+	i := currentPlayer.tablePos + 1
 	for {
 		nextPlayer, ok := t.seats[i]
+		if nextPlayer == currentPlayer {
+			return nil, fmt.Errorf("%s is the only player on the table", addr)
+		}
 		if ok {
-			if nextPlayer.addr == currentPlayer.addr {
-				return nil, fmt.Errorf("%s is the only player in the table", addr)
-			}
-
 			return nextPlayer, nil
 		}
+
 		i++
+		if t.maxSeats <= i {
+			i = 0
+		}
 	}
+}
+
+func (t *Table) clear() {
+	t.seats = map[int]*Player{}
 }
 
 func (t *Table) LenPlayers() int {
@@ -198,11 +126,97 @@ func (t *Table) LenPlayers() int {
 	return len(t.seats)
 }
 
-func (t *Table) getNextAvaliableSeat() int {
-	for k := range t.maxSeats {
-		if _, ok := t.seats[k]; !ok {
-			return k
+func (t *Table) RemovePlayerByAddr(addr string) error {
+	t.lock.Lock()
+	defer t.lock.Unlock()
+
+	for i := 0; i < t.maxSeats; i++ {
+		player, ok := t.seats[i]
+		if ok {
+			if player.addr == addr {
+				delete(t.seats, i)
+				return nil
+			}
 		}
 	}
-	panic("no free seat avaliable")
+
+	return fmt.Errorf("player (%s) not on the table", addr)
+}
+
+func (t *Table) GetPlayer(addr string) (*Player, error) {
+	t.lock.RLock()
+	defer t.lock.RUnlock()
+
+	return t.getPlayer(addr)
+}
+
+func (t *Table) getPlayer(addr string) (*Player, error) {
+	for i := 0; i < t.maxSeats; i++ {
+		player, ok := t.seats[i]
+		if ok {
+			if player.addr == addr {
+				return player, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("player (%s) not on the table", addr)
+}
+
+func (t *Table) SetPlayerStatus(addr string, s GameStatus) {
+	t.lock.Lock()
+	defer t.lock.Unlock()
+
+	p, err := t.getPlayer(addr)
+	if err != nil {
+		panic(err)
+	}
+	p.gameStatus = s
+}
+
+func (t *Table) AddPlayerOnPosition(addr string, pos int) error {
+	t.lock.Lock()
+	defer t.lock.Unlock()
+
+	if len(t.seats) == t.maxSeats {
+		return fmt.Errorf("player table is full")
+	}
+
+	// pos := t.getNextFreeSeat()
+	player := NewPlayer(addr)
+	player.tablePos = pos
+	player.gameStatus = GameStatusPlayerReady
+
+	t.seats[pos] = player
+
+	return nil
+}
+
+// NOTE: Adding a player to the table should set the gameStatus to Ready.
+func (t *Table) AddPlayer(addr string) error {
+	t.lock.Lock()
+	defer t.lock.Unlock()
+
+	if len(t.seats) == t.maxSeats {
+		return fmt.Errorf("player table is full")
+	}
+
+	pos := t.getNextFreeSeat()
+	player := NewPlayer(addr)
+	player.tablePos = pos
+	player.gameStatus = GameStatusPlayerReady
+
+	t.seats[pos] = player
+
+	return nil
+}
+
+func (t *Table) getNextFreeSeat() int {
+	for i := 0; i < t.maxSeats; i++ {
+		if _, ok := t.seats[i]; !ok {
+			return i
+		}
+	}
+
+	panic("no free seat is available!!")
 }
