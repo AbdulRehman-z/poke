@@ -1,10 +1,13 @@
 package p2p
 
-import "github.com/AbdulRehman-z/poke/deck"
-
 type Message struct {
 	Payload any
 	From    string
+}
+
+type BroadcastTo struct {
+	To      []string
+	Payload any
 }
 
 func NewMessage(from string, payload any) *Message {
@@ -22,40 +25,31 @@ type Handshake struct {
 }
 
 type MessagePlayerAction struct {
-	// CurrentGameStatus is the current game status of the player sending the message
-	//status should be exactly same as ours
+	// CurrentGameStatus is the current status of the sending player his game.
+	// this needs to the exact same as ours.
 	CurrentGameStatus GameStatus
-	// Action is the action the player is taking
+	// Action is the action that the player is willin to take.
 	Action PlayerAction
-	// Value is the value of the bet if any
+	// The value of the bet if any
 	Value int
+}
+
+type MessagePreFlop struct{}
+
+func (msg MessagePreFlop) String() string {
+	return "MSG: PREFLOP"
 }
 
 type MessagePeerList struct {
 	Peers []string
 }
 
-type MessageCards struct {
-	Deck deck.Deck
-}
-
-type MessageEncCards struct {
+type MessageEncDeck struct {
 	Deck [][]byte
-}
-
-type BroadcastToPeers struct {
-	To      []string
-	Payload any
 }
 
 type MessageReady struct{}
 
 func (msg MessageReady) String() string {
-	return "READY"
-}
-
-type MessagePreFlop struct{}
-
-func (msg MessagePreFlop) String() string {
-	return "PREFLOP"
+	return "MSG: READY"
 }

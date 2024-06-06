@@ -2,74 +2,88 @@ package p2p
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
+
+	"github.com/gorilla/mux"
 )
 
-type apiFunc func(http.ResponseWriter, *http.Request) error
+type MyError struct {
+	err error
+}
 
-func makeHttpHandleFunc(fn apiFunc) http.HandlerFunc {
+func (e MyError) Error() string {
+	return e.err.Error()
+}
+
+type apiFunc func(w http.ResponseWriter, r *http.Request) error
+
+func makeHTTPHandleFunc(f apiFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if err := fn(w, r); err != nil {
-			writeJson(w, http.StatusBadRequest, map[string]any{"err": err.Error()})
+		if err := f(w, r); err != nil {
+			JSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		}
 	}
 }
 
-func writeJson(w http.ResponseWriter, status int, v any) error {
+func JSON(w http.ResponseWriter, status int, v any) error {
 	w.WriteHeader(status)
 	return json.NewEncoder(w).Encode(v)
 }
 
-type ApiServer struct {
+type APIServer struct {
 	listenAddr string
-	game       *Game
-	mux        *http.ServeMux
+	game       *GameState
 }
 
-func NewApiServer(addr string, game *Game) *ApiServer {
-	return &ApiServer{
-		listenAddr: addr,
+func NewAPIServer(listenAddr string, game *GameState) *APIServer {
+	return &APIServer{
 		game:       game,
-		mux:        http.NewServeMux(),
+		listenAddr: listenAddr,
 	}
 }
 
-func (s *ApiServer) Run() {
-	s.mux.HandleFunc("GET /ready", makeHttpHandleFunc(s.handlePlayersReady))
-	s.mux.HandleFunc("GET /fold", makeHttpHandleFunc(s.handlePlayersFold))
-	s.mux.HandleFunc("GET /check", makeHttpHandleFunc(s.handlePlayersChecked))
-	s.mux.HandleFunc("GET /bet/{value}", makeHttpHandleFunc(s.handlePlayersBet))
+func (s *APIServer) Run() {
+	r := mux.NewRouter()
 
-	http.ListenAndServe(s.listenAddr, s.mux)
+	r.HandleFunc("/ready", makeHTTPHandleFunc(s.handlePlayerReady))
+	r.HandleFunc("/fold", makeHTTPHandleFunc(s.handlePlayerFold))
+	r.HandleFunc("/check", makeHTTPHandleFunc(s.handlePlayerCheck))
+	r.HandleFunc("/bet/{value}", makeHTTPHandleFunc(s.handlePlayerBet))
+
+	http.ListenAndServe(s.listenAddr, r)
 }
 
-func (s *ApiServer) handlePlayersReady(w http.ResponseWriter, r *http.Request) error {
-	s.game.SetReady()
-	return writeJson(w, http.StatusOK, "READY")
-}
-
-func (s *ApiServer) handlePlayersBet(w http.ResponseWriter, r *http.Request) error {
-	val := r.PathValue("value")
-	intVal, _ := strconv.Atoi(val)
-	if err := s.game.TakeAction(PlayerActionBet, intVal); err != nil {
+func (s *APIServer) handlePlayerBet(w http.ResponseWriter, r *http.Request) error {
+	valueStr := mux.Vars(r)["value"]
+	value, err := strconv.Atoi(valueStr)
+	if err != nil {
 		return err
 	}
-	return writeJson(w, http.StatusOK, map[string]int{
-		"value": intVal,
-	})
+
+	if err := s.game.TakeAction(PlayerActionBet, value); err != nil {
+		return err
+	}
+
+	return JSON(w, http.StatusOK, fmt.Sprintf("value:%d", value))
 }
 
-func (s *ApiServer) handlePlayersChecked(w http.ResponseWriter, r *http.Request) error {
+func (s *APIServer) handlePlayerCheck(w http.ResponseWriter, r *http.Request) error {
 	if err := s.game.TakeAction(PlayerActionCheck, 0); err != nil {
 		return err
 	}
-	return writeJson(w, http.StatusOK, "CHECKED")
+	return JSON(w, http.StatusOK, "CHECKED")
 }
 
-func (s *ApiServer) handlePlayersFold(w http.ResponseWriter, r *http.Request) error {
+func (s *APIServer) handlePlayerFold(w http.ResponseWriter, r *http.Request) error {
 	if err := s.game.TakeAction(PlayerActionFold, 0); err != nil {
 		return err
 	}
-	return writeJson(w, http.StatusOK, "FOLDED")
+	return JSON(w, http.StatusOK, "FOLDED")
+}
+
+func (s *APIServer) handlePlayerReady(w http.ResponseWriter, r *http.Request) error {
+	s.game.SetReady()
+	return JSON(w, http.StatusOK, "READY")
 }

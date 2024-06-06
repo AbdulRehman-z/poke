@@ -1,112 +1,114 @@
 package p2p
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
 
-func TestPlayerInTable(t *testing.T) {
-	maxSeats := 2
-	table := NewTable(maxSeats)
-	addr1 := ":2000"
-	addr2 := ":3000"
-	addr3 := ":4000"
+func TestTableGetPlayerBefore(t *testing.T) {
+	var (
+		maxSeats = 6
+		table    = NewTable(maxSeats)
+	)
 
-	// add players
-	err := table.AddPlayer(addr1)
-	assert.NoError(t, err)
-	err = table.AddPlayer(addr2)
-	assert.NoError(t, err)
-	err = table.AddPlayer(addr3) // table is already full at this point
+	assert.Nil(t, table.AddPlayer("1"))
+	assert.Nil(t, table.AddPlayer("2"))
+	prevPlayer, err := table.GetPlayerBefore("2")
+	assert.Nil(t, err)
+	assert.Equal(t, prevPlayer.addr, "1")
+
+	prevPlayer, err = table.GetPlayerBefore("1")
+	assert.Nil(t, err)
+	assert.Equal(t, prevPlayer.addr, "2")
+}
+
+func TestTableGetPlayerAfter(t *testing.T) {
+	var (
+		maxSeats = 10
+		table    = NewTable(maxSeats)
+	)
+
+	assert.Nil(t, table.AddPlayer("1"))
+	assert.Nil(t, table.AddPlayer("2"))
+	nextPlayer, err := table.GetPlayerAfter("1")
+	assert.Nil(t, err)
+	assert.Equal(t, nextPlayer.addr, "2")
+
+	assert.Nil(t, table.AddPlayer("3"))
+	assert.Nil(t, table.RemovePlayerByAddr("2"))
+	nextPlayer, err = table.GetPlayerAfter("1")
+	assert.Nil(t, err)
+	assert.Equal(t, nextPlayer.addr, "3")
+
+	assert.Nil(t, table.RemovePlayerByAddr("3"))
+	nextPlayer, err = table.GetPlayerAfter("1")
 	assert.NotNil(t, err)
+	assert.Nil(t, nextPlayer)
 
-	// get player
-	player, err := table.GetPlayer(addr1)
-	assert.NoError(t, err)
-	assert.Equal(t, player.addr, addr1)
-
-	// remove player
-	err = table.RemovePlayerByAddr(addr1)
-	assert.NoError(t, err)
-
-	// get the same player again after removing it
-	player, err = table.GetPlayer(addr1)
-	assert.Nil(t, player)
-	assert.Error(t, err)
-
-	// get player with addr2
-	player, err = table.GetPlayer(addr2)
-	assert.Equal(t, player.addr, addr2)
+	assert.Nil(t, table.AddPlayer("2"))
+	nextPlayer, err = table.GetPlayerAfter("2")
 	assert.Nil(t, err)
+	assert.Equal(t, nextPlayer.addr, "1")
 
-	// remove player with addr2
-	err = table.RemovePlayerByAddr(addr2)
+	// Test the edge case on the last player
+	table.clear()
+	table.maxSeats = 3
+	assert.Nil(t, table.AddPlayer("1"))
+	assert.Nil(t, table.AddPlayer("2"))
+	assert.Nil(t, table.AddPlayer("3"))
+
+	nextPlayer, err = table.GetPlayerAfter("3")
 	assert.Nil(t, err)
-
-	// table seats must be empty now
-	assert.Len(t, table.seats, 0)
+	assert.NotNil(t, nextPlayer)
+	assert.Equal(t, nextPlayer.addr, "1")
 }
 
-func TestGetPlayerBeforeMe(t *testing.T) {
-
+func TestTableRemovePlayer(t *testing.T) {
 	var (
-		maxSeats = 4
+		maxSeats = 10
 		table    = NewTable(maxSeats)
-		addr1    = ":2000"
-		addr2    = ":3000"
-		addr3    = ":4000"
-		addr4    = ":5000"
 	)
 
-	// add players
-	assert.Nil(t, table.AddPlayer(addr1))
-	assert.Nil(t, table.AddPlayer(addr2))
-	assert.Nil(t, table.AddPlayer(addr3))
-	assert.Nil(t, table.AddPlayer(addr4))
+	for i := 0; i < maxSeats; i++ {
+		addr := fmt.Sprintf("%d", i)
+		assert.Nil(t, table.AddPlayer(addr))
+		assert.Nil(t, table.RemovePlayerByAddr(addr))
 
-	// get players before me
-	player, _ := table.GetPlayerBefore(addr1)
-	assert.Equal(t, player.addr, addr4)
-	player, _ = table.GetPlayerBefore(addr4)
-	assert.Equal(t, player.addr, addr3)
-
-	// remove the player and then get player before me
-	assert.Nil(t, table.RemovePlayerByAddr(addr1))
-	player, _ = table.GetPlayerBefore(addr2)
-	assert.Equal(t, player.addr, addr4)
+		player, err := table.GetPlayer(addr)
+		assert.NotNil(t, err)
+		assert.Nil(t, player)
+	}
 }
 
-func TestGetPlayerAfterMe(t *testing.T) {
+func TestTableAddPlayer(t *testing.T) {
 	var (
-		maxSeats = 4
+		maxSeats = 2
 		table    = NewTable(maxSeats)
-		addr1    = ":2000"
-		addr2    = ":3000"
-		addr3    = ":4000"
-		addr4    = ":5000"
 	)
 
-	// add players
-	assert.Nil(t, table.AddPlayer(addr1))
-	assert.Nil(t, table.AddPlayer(addr2))
-	assert.Nil(t, table.AddPlayer(addr3))
-	assert.Nil(t, table.AddPlayer(addr4))
+	assert.Nil(t, table.AddPlayer(":1"))
+	assert.Nil(t, table.AddPlayer(":2"))
 
-	// get next player
-	player, _ := table.GetPlayerAfter(addr1)
-	assert.Equal(t, player.addr, addr2)
-	player, _ = table.GetPlayerAfter(addr2)
-	assert.Equal(t, player.addr, addr3)
-	player, _ = table.GetPlayerAfter(addr3)
-	assert.Equal(t, player.addr, addr4)
-	player, _ = table.GetPlayerAfter(addr4)
-	assert.Equal(t, player.addr, addr1)
+	assert.Equal(t, 2, table.LenPlayers())
 
-	// remove one player and the get next player from player map
-	err := table.RemovePlayerByAddr(addr2)
-	assert.NoError(t, err)
-	player, err = table.GetPlayerAfter(addr1)
-	assert.Nil(t, err)
-	assert.Equal(t, player.addr, addr3)
+	assert.NotNil(t, table.AddPlayer(":3"))
+	assert.Equal(t, 2, table.LenPlayers())
+}
+
+func TestTableGetPlayer(t *testing.T) {
+	var (
+		maxSeats = 10
+		table    = NewTable(maxSeats)
+	)
+
+	for i := 0; i < maxSeats; i++ {
+		addr := fmt.Sprintf("%d", i)
+		assert.Nil(t, table.AddPlayer(addr))
+		player, err := table.GetPlayer(addr)
+		assert.Nil(t, err)
+		assert.Equal(t, player.addr, addr)
+	}
+	assert.Equal(t, maxSeats, table.LenPlayers())
 }
