@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+option go_package = "github.com/abdulrehman-z/proto";
+
+service Gossip {
+	rpc Handshake (Version) returns (Version);
+}
+
+message Version {
+	string version = 1;
+	string listenAddr = 2;
+	int32 gameVariant = 3;
+	int32 gameStstus = 4;
+	repeated string peerList = 5;
+}
